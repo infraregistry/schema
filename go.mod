@@ -1,6 +1,6 @@
 module github.com/infraregistry/schema
 
-go 1.22.0
+go 1.23.0
 
 require (
 	github.com/jaswdr/faker/v2 v2.3.0
