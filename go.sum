@@ -6,6 +6,8 @@ github.com/jaswdr/faker/v2 v2.3.0 h1:jgQ9UmU2Eb5tSQ8JkUS4tPoyTM2OtThQpOpwk7Fa9RY
 github.com/jaswdr/faker/v2 v2.3.0/go.mod h1:ROK8xwQV0hYOLDUtxCQgHGcl10jbVzIvqHxcIDdwY2Q=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+github.com/steebchen/prisma-client-go v0.42.0 h1:83keN+4jGvoTccCKCk74UU5JQj6pOwPcg3/zkoqxKJE=
+github.com/steebchen/prisma-client-go v0.42.0/go.mod h1:wp2xU9HO5WIefc65vcl1HOiFUzaHKyOhHw5atrzs8hc=
 github.com/stretchr/testify v1.8.2 h1:+h33VjcLVPDHtOdpUCuF+7gSuG3yGIftsP1YvFihtJ8=
 github.com/stretchr/testify v1.8.2/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o6fzry7u4=
 github.com/surrealdb/surrealdb.go v0.2.1 h1:E4rCnD75Ftq8/wTgbQ9kJgMACi3xMziXtMlRkm6Jh1g=

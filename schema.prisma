@@ -1,0 +1,101 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("POSTGRES_URI")
+}
+
+generator db {
+  provider = "go run github.com/steebchen/prisma-client-go"
+}
+
+model Organization {
+  id      String   @id @default(cuid())
+  created DateTime @default(now())
+  updated DateTime @updatedAt
+  name    String
+  users   User[]
+
+  @@map("organizations")
+}
+
+model User {
+  id              String       @id @default(cuid())
+  email           String       @unique
+  password        String
+  status          String
+  created         DateTime     @default(now())
+  updated         DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id])
+  organization_id String
+  roles           UserRole[]
+  sessions        Session[]
+
+  @@map("users")
+}
+
+model Session {
+  id      String   @id @default(cuid())
+  created DateTime @default(now())
+  updated DateTime @updatedAt
+  status  String
+  user    User     @relation(fields: [user_id], references: [id])
+  user_id String
+
+  @@map("sessions")
+}
+
+model Registration {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  email     String   @unique
+  password  String
+  status    String
+  role      String
+  code      String
+
+  @@map("registrations")
+}
+
+model Role {
+  id          String           @id @default(cuid())
+  created     DateTime         @default(now())
+  updated     DateTime         @updatedAt
+  name        String           @unique
+  permissions RolePermission[]
+  users       UserRole[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id      String           @id @default(cuid())
+  created DateTime         @default(now())
+  updated DateTime         @updatedAt
+  name    String
+  roles   RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  id            String     @id @default(cuid())
+  created       DateTime   @default(now())
+  updated       DateTime   @updatedAt
+  role          Role       @relation(fields: [role_id], references: [id])
+  role_id       String
+  permission    Permission @relation(fields: [permission_id], references: [id])
+  permission_id String
+
+  @@map("role_permissions")
+}
+
+model UserRole {
+  id      String   @id @default(cuid())
+  created DateTime @default(now())
+  updated DateTime @updatedAt
+  user    User     @relation(fields: [user_id], references: [id])
+  user_id String
+  role    Role     @relation(fields: [role_id], references: [id])
+  role_id String
+
+  @@map("user_roles")
+}

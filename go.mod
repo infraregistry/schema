@@ -7,4 +7,7 @@ require (
 	github.com/surrealdb/surrealdb.go v0.2.1
 )
 
-require github.com/gorilla/websocket v1.5.0 // indirect
+require (
+	github.com/gorilla/websocket v1.5.0 // indirect
+	github.com/steebchen/prisma-client-go v0.42.0 // indirect
+)
