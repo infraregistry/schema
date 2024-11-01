@@ -1,0 +1,13 @@
+services:
+  sqll-test:
+    container_name: sql-test
+    platform: linux/amd64
+    image: timescale/timescaledb:latest-pg15
+    command: postgres -c shared_preload_libraries=timescaledb
+    ports:
+      - "15432:5432"
+    environment:
+      - PGDATA=/var/lib/postgresql/data/timescaledb
+      - POSTGRES_DB=test
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres

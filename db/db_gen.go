@@ -82,24 +82,29 @@ generator db {
 }
 
 model Organization {
-  id      String   @id @default(cuid())
-  created DateTime @default(now())
-  updated DateTime @updatedAt
-  name    String
-  users   User[]
+  id         String      @id @default(cuid())
+  created    DateTime    @default(now())
+  updated    DateTime    @updatedAt
+  name       String
+  users      User[]
+  components Component[]
+  tags       Tag[]
+  documents  Document[]
+  Block      Block[]
+  sessions   Session[]
 
   @@map("organizations")
 }
 
 model User {
   id              String       @id @default(cuid())
+  organization    Organization @relation(fields: [organization_id], references: [id])
+  organization_id String
   email           String       @unique
   password        String
   status          String
   created         DateTime     @default(now())
   updated         DateTime     @updatedAt
-  organization    Organization @relation(fields: [organization_id], references: [id])
-  organization_id String
   roles           UserRole[]
   sessions        Session[]
 
@@ -107,12 +112,14 @@ model User {
 }
 
 model Session {
-  id      String   @id @default(cuid())
-  created DateTime @default(now())
-  updated DateTime @updatedAt
-  status  String
-  user    User     @relation(fields: [user_id], references: [id])
-  user_id String
+  id              String       @id @default(cuid())
+  organization    Organization @relation(fields: [organization_id], references: [id])
+  organization_id String
+  created         DateTime     @default(now())
+  updated         DateTime     @updatedAt
+  status          String
+  user            User         @relation(fields: [user_id], references: [id])
+  user_id         String
 
   @@map("sessions")
 }
@@ -144,7 +151,7 @@ model Permission {
   id      String           @id @default(cuid())
   created DateTime         @default(now())
   updated DateTime         @updatedAt
-  name    String
+  name    String           @unique
   roles   RolePermission[]
 
   @@map("permissions")
@@ -159,6 +166,7 @@ model RolePermission {
   permission    Permission @relation(fields: [permission_id], references: [id])
   permission_id String
 
+  @@unique([role_id, permission_id])
   @@map("role_permissions")
 }
 
@@ -172,6 +180,83 @@ model UserRole {
   role_id String
 
   @@map("user_roles")
+}
+
+model Component {
+  id              String         @id @default(cuid())
+  organization    Organization   @relation(fields: [organization_id], references: [id])
+  organization_id String
+  created         DateTime       @default(now())
+  updated         DateTime       @updatedAt
+  name            String
+  type            String
+  provider        String
+  tags            ComponentTag[]
+
+  @@map("components")
+}
+
+model ComponentTag {
+  id           String    @id @default(cuid())
+  created      DateTime  @default(now())
+  updated      DateTime  @updatedAt
+  component    Component @relation(fields: [component_id], references: [id])
+  component_id String
+  tag          Tag       @relation(fields: [tag_id], references: [id])
+  tag_id       String
+
+  @@map("component_tags")
+}
+
+model Tag {
+  id              String         @id @default(cuid())
+  organization    Organization   @relation(fields: [organization_id], references: [id])
+  organization_id String
+  created         DateTime       @default(now())
+  updated         DateTime       @updatedAt
+  name            String
+  ComponentTag    ComponentTag[]
+
+  @@map("tags")
+}
+
+model Document {
+  id              String          @id @default(cuid())
+  organization    Organization    @relation(fields: [organization_id], references: [id])
+  organization_id String
+  created         DateTime        @default(now())
+  updated         DateTime        @updatedAt
+  name            String
+  content         Json
+  blocks          DocumentBlock[]
+
+  @@map("documents")
+}
+
+model DocumentBlock {
+  id          String   @id @default(cuid())
+  created     DateTime @default(now())
+  updated     DateTime @updatedAt
+  document    Document @relation(fields: [document_id], references: [id])
+  document_id String
+  block       Block    @relation(fields: [block_id], references: [id])
+  block_id    String
+  position    Int
+
+  @@map("document_blocks")
+}
+
+model Block {
+  id              String          @id @default(cuid())
+  organization    Organization    @relation(fields: [organization_id], references: [id])
+  organization_id String
+  created         DateTime        @default(now())
+  updated         DateTime        @updatedAt
+  type            String
+  content         Json
+  documents       DocumentBlock[]
+
+  @@map("blocks")
 }
 `
 const schemaDatasourceURL = ""
@@ -252,6 +337,12 @@ func newClient() *PrismaClient {
 	c.Permission = permissionActions{client: c}
 	c.RolePermission = rolePermissionActions{client: c}
 	c.UserRole = userRoleActions{client: c}
+	c.Component = componentActions{client: c}
+	c.ComponentTag = componentTagActions{client: c}
+	c.Tag = tagActions{client: c}
+	c.Document = documentActions{client: c}
+	c.DocumentBlock = documentBlockActions{client: c}
+	c.Block = blockActions{client: c}
 
 	c.Prisma = &PrismaActions{
 		Raw: &raw.Raw{Engine: c},
@@ -292,6 +383,18 @@ type PrismaClient struct {
 	RolePermission rolePermissionActions
 	// UserRole provides access to CRUD methods.
 	UserRole userRoleActions
+	// Component provides access to CRUD methods.
+	Component componentActions
+	// ComponentTag provides access to CRUD methods.
+	ComponentTag componentTagActions
+	// Tag provides access to CRUD methods.
+	Tag tagActions
+	// Document provides access to CRUD methods.
+	Document documentActions
+	// DocumentBlock provides access to CRUD methods.
+	DocumentBlock documentBlockActions
+	// Block provides access to CRUD methods.
+	Block blockActions
 }
 
 // --- template enums.gotpl ---
@@ -318,22 +421,23 @@ type UserScalarFieldEnum string
 
 const (
 	UserScalarFieldEnumID             UserScalarFieldEnum = "id"
+	UserScalarFieldEnumOrganizationID UserScalarFieldEnum = "organization_id"
 	UserScalarFieldEnumEmail          UserScalarFieldEnum = "email"
 	UserScalarFieldEnumPassword       UserScalarFieldEnum = "password"
 	UserScalarFieldEnumStatus         UserScalarFieldEnum = "status"
 	UserScalarFieldEnumCreated        UserScalarFieldEnum = "created"
 	UserScalarFieldEnumUpdated        UserScalarFieldEnum = "updated"
-	UserScalarFieldEnumOrganizationID UserScalarFieldEnum = "organization_id"
 )
 
 type SessionScalarFieldEnum string
 
 const (
-	SessionScalarFieldEnumID      SessionScalarFieldEnum = "id"
-	SessionScalarFieldEnumCreated SessionScalarFieldEnum = "created"
-	SessionScalarFieldEnumUpdated SessionScalarFieldEnum = "updated"
-	SessionScalarFieldEnumStatus  SessionScalarFieldEnum = "status"
-	SessionScalarFieldEnumUserID  SessionScalarFieldEnum = "user_id"
+	SessionScalarFieldEnumID             SessionScalarFieldEnum = "id"
+	SessionScalarFieldEnumOrganizationID SessionScalarFieldEnum = "organization_id"
+	SessionScalarFieldEnumCreated        SessionScalarFieldEnum = "created"
+	SessionScalarFieldEnumUpdated        SessionScalarFieldEnum = "updated"
+	SessionScalarFieldEnumStatus         SessionScalarFieldEnum = "status"
+	SessionScalarFieldEnumUserID         SessionScalarFieldEnum = "user_id"
 )
 
 type RegistrationScalarFieldEnum string
@@ -386,6 +490,71 @@ const (
 	UserRoleScalarFieldEnumRoleID  UserRoleScalarFieldEnum = "role_id"
 )
 
+type ComponentScalarFieldEnum string
+
+const (
+	ComponentScalarFieldEnumID             ComponentScalarFieldEnum = "id"
+	ComponentScalarFieldEnumOrganizationID ComponentScalarFieldEnum = "organization_id"
+	ComponentScalarFieldEnumCreated        ComponentScalarFieldEnum = "created"
+	ComponentScalarFieldEnumUpdated        ComponentScalarFieldEnum = "updated"
+	ComponentScalarFieldEnumName           ComponentScalarFieldEnum = "name"
+	ComponentScalarFieldEnumType           ComponentScalarFieldEnum = "type"
+	ComponentScalarFieldEnumProvider       ComponentScalarFieldEnum = "provider"
+)
+
+type ComponentTagScalarFieldEnum string
+
+const (
+	ComponentTagScalarFieldEnumID          ComponentTagScalarFieldEnum = "id"
+	ComponentTagScalarFieldEnumCreated     ComponentTagScalarFieldEnum = "created"
+	ComponentTagScalarFieldEnumUpdated     ComponentTagScalarFieldEnum = "updated"
+	ComponentTagScalarFieldEnumComponentID ComponentTagScalarFieldEnum = "component_id"
+	ComponentTagScalarFieldEnumTagID       ComponentTagScalarFieldEnum = "tag_id"
+)
+
+type TagScalarFieldEnum string
+
+const (
+	TagScalarFieldEnumID             TagScalarFieldEnum = "id"
+	TagScalarFieldEnumOrganizationID TagScalarFieldEnum = "organization_id"
+	TagScalarFieldEnumCreated        TagScalarFieldEnum = "created"
+	TagScalarFieldEnumUpdated        TagScalarFieldEnum = "updated"
+	TagScalarFieldEnumName           TagScalarFieldEnum = "name"
+)
+
+type DocumentScalarFieldEnum string
+
+const (
+	DocumentScalarFieldEnumID             DocumentScalarFieldEnum = "id"
+	DocumentScalarFieldEnumOrganizationID DocumentScalarFieldEnum = "organization_id"
+	DocumentScalarFieldEnumCreated        DocumentScalarFieldEnum = "created"
+	DocumentScalarFieldEnumUpdated        DocumentScalarFieldEnum = "updated"
+	DocumentScalarFieldEnumName           DocumentScalarFieldEnum = "name"
+	DocumentScalarFieldEnumContent        DocumentScalarFieldEnum = "content"
+)
+
+type DocumentBlockScalarFieldEnum string
+
+const (
+	DocumentBlockScalarFieldEnumID         DocumentBlockScalarFieldEnum = "id"
+	DocumentBlockScalarFieldEnumCreated    DocumentBlockScalarFieldEnum = "created"
+	DocumentBlockScalarFieldEnumUpdated    DocumentBlockScalarFieldEnum = "updated"
+	DocumentBlockScalarFieldEnumDocumentID DocumentBlockScalarFieldEnum = "document_id"
+	DocumentBlockScalarFieldEnumBlockID    DocumentBlockScalarFieldEnum = "block_id"
+	DocumentBlockScalarFieldEnumPosition   DocumentBlockScalarFieldEnum = "position"
+)
+
+type BlockScalarFieldEnum string
+
+const (
+	BlockScalarFieldEnumID             BlockScalarFieldEnum = "id"
+	BlockScalarFieldEnumOrganizationID BlockScalarFieldEnum = "organization_id"
+	BlockScalarFieldEnumCreated        BlockScalarFieldEnum = "created"
+	BlockScalarFieldEnumUpdated        BlockScalarFieldEnum = "updated"
+	BlockScalarFieldEnumType           BlockScalarFieldEnum = "type"
+	BlockScalarFieldEnumContent        BlockScalarFieldEnum = "content"
+)
+
 type SortOrder string
 
 const (
@@ -393,11 +562,25 @@ const (
 	SortOrderDesc SortOrder = "desc"
 )
 
+type JSONNullValueInput string
+
+const (
+	JSONNullValueInputJSONNull JSONNullValueInput = "JsonNull"
+)
+
 type QueryMode string
 
 const (
 	QueryModeDefault     QueryMode = "default"
 	QueryModeInsensitive QueryMode = "insensitive"
+)
+
+type JSONNullValueFilter string
+
+const (
+	JSONNullValueFilterDBNull   JSONNullValueFilter = "DbNull"
+	JSONNullValueFilterJSONNull JSONNullValueFilter = "JsonNull"
+	JSONNullValueFilterAnyNull  JSONNullValueFilter = "AnyNull"
 )
 
 // --- template errors.gotpl ---
@@ -443,9 +626,23 @@ const organizationFieldName organizationPrismaFields = "name"
 
 const organizationFieldUsers organizationPrismaFields = "users"
 
+const organizationFieldComponents organizationPrismaFields = "components"
+
+const organizationFieldTags organizationPrismaFields = "tags"
+
+const organizationFieldDocuments organizationPrismaFields = "documents"
+
+const organizationFieldBlock organizationPrismaFields = "Block"
+
+const organizationFieldSessions organizationPrismaFields = "sessions"
+
 type userPrismaFields = prismaFields
 
 const userFieldID userPrismaFields = "id"
+
+const userFieldOrganization userPrismaFields = "organization"
+
+const userFieldOrganizationID userPrismaFields = "organization_id"
 
 const userFieldEmail userPrismaFields = "email"
 
@@ -457,10 +654,6 @@ const userFieldCreated userPrismaFields = "created"
 
 const userFieldUpdated userPrismaFields = "updated"
 
-const userFieldOrganization userPrismaFields = "organization"
-
-const userFieldOrganizationID userPrismaFields = "organization_id"
-
 const userFieldRoles userPrismaFields = "roles"
 
 const userFieldSessions userPrismaFields = "sessions"
@@ -468,6 +661,10 @@ const userFieldSessions userPrismaFields = "sessions"
 type sessionPrismaFields = prismaFields
 
 const sessionFieldID sessionPrismaFields = "id"
+
+const sessionFieldOrganization sessionPrismaFields = "organization"
+
+const sessionFieldOrganizationID sessionPrismaFields = "organization_id"
 
 const sessionFieldCreated sessionPrismaFields = "created"
 
@@ -553,6 +750,112 @@ const userRoleFieldRole userRolePrismaFields = "role"
 
 const userRoleFieldRoleID userRolePrismaFields = "role_id"
 
+type componentPrismaFields = prismaFields
+
+const componentFieldID componentPrismaFields = "id"
+
+const componentFieldOrganization componentPrismaFields = "organization"
+
+const componentFieldOrganizationID componentPrismaFields = "organization_id"
+
+const componentFieldCreated componentPrismaFields = "created"
+
+const componentFieldUpdated componentPrismaFields = "updated"
+
+const componentFieldName componentPrismaFields = "name"
+
+const componentFieldType componentPrismaFields = "type"
+
+const componentFieldProvider componentPrismaFields = "provider"
+
+const componentFieldTags componentPrismaFields = "tags"
+
+type componentTagPrismaFields = prismaFields
+
+const componentTagFieldID componentTagPrismaFields = "id"
+
+const componentTagFieldCreated componentTagPrismaFields = "created"
+
+const componentTagFieldUpdated componentTagPrismaFields = "updated"
+
+const componentTagFieldComponent componentTagPrismaFields = "component"
+
+const componentTagFieldComponentID componentTagPrismaFields = "component_id"
+
+const componentTagFieldTag componentTagPrismaFields = "tag"
+
+const componentTagFieldTagID componentTagPrismaFields = "tag_id"
+
+type tagPrismaFields = prismaFields
+
+const tagFieldID tagPrismaFields = "id"
+
+const tagFieldOrganization tagPrismaFields = "organization"
+
+const tagFieldOrganizationID tagPrismaFields = "organization_id"
+
+const tagFieldCreated tagPrismaFields = "created"
+
+const tagFieldUpdated tagPrismaFields = "updated"
+
+const tagFieldName tagPrismaFields = "name"
+
+const tagFieldComponentTag tagPrismaFields = "ComponentTag"
+
+type documentPrismaFields = prismaFields
+
+const documentFieldID documentPrismaFields = "id"
+
+const documentFieldOrganization documentPrismaFields = "organization"
+
+const documentFieldOrganizationID documentPrismaFields = "organization_id"
+
+const documentFieldCreated documentPrismaFields = "created"
+
+const documentFieldUpdated documentPrismaFields = "updated"
+
+const documentFieldName documentPrismaFields = "name"
+
+const documentFieldContent documentPrismaFields = "content"
+
+const documentFieldBlocks documentPrismaFields = "blocks"
+
+type documentBlockPrismaFields = prismaFields
+
+const documentBlockFieldID documentBlockPrismaFields = "id"
+
+const documentBlockFieldCreated documentBlockPrismaFields = "created"
+
+const documentBlockFieldUpdated documentBlockPrismaFields = "updated"
+
+const documentBlockFieldDocument documentBlockPrismaFields = "document"
+
+const documentBlockFieldDocumentID documentBlockPrismaFields = "document_id"
+
+const documentBlockFieldBlock documentBlockPrismaFields = "block"
+
+const documentBlockFieldBlockID documentBlockPrismaFields = "block_id"
+
+const documentBlockFieldPosition documentBlockPrismaFields = "position"
+
+type blockPrismaFields = prismaFields
+
+const blockFieldID blockPrismaFields = "id"
+
+const blockFieldOrganization blockPrismaFields = "organization"
+
+const blockFieldOrganizationID blockPrismaFields = "organization_id"
+
+const blockFieldCreated blockPrismaFields = "created"
+
+const blockFieldUpdated blockPrismaFields = "updated"
+
+const blockFieldType blockPrismaFields = "type"
+
+const blockFieldContent blockPrismaFields = "content"
+
+const blockFieldDocuments blockPrismaFields = "documents"
+
 // --- template mock.gotpl ---
 func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 	expectations := new([]mock.Expectation)
@@ -595,6 +898,30 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 		mock: m,
 	}
 
+	m.Component = componentMock{
+		mock: m,
+	}
+
+	m.ComponentTag = componentTagMock{
+		mock: m,
+	}
+
+	m.Tag = tagMock{
+		mock: m,
+	}
+
+	m.Document = documentMock{
+		mock: m,
+	}
+
+	m.DocumentBlock = documentBlockMock{
+		mock: m,
+	}
+
+	m.Block = blockMock{
+		mock: m,
+	}
+
 	return pc, m, m.Ensure
 }
 
@@ -616,6 +943,18 @@ type Mock struct {
 	RolePermission rolePermissionMock
 
 	UserRole userRoleMock
+
+	Component componentMock
+
+	ComponentTag componentTagMock
+
+	Tag tagMock
+
+	Document documentMock
+
+	DocumentBlock documentBlockMock
+
+	Block blockMock
 }
 
 type organizationMock struct {
@@ -954,6 +1293,258 @@ func (m *userRoleMockExec) Errors(err error) {
 	})
 }
 
+type componentMock struct {
+	mock *Mock
+}
+
+type ComponentMockExpectParam interface {
+	ExtractQuery() builder.Query
+	componentModel()
+}
+
+func (m *componentMock) Expect(query ComponentMockExpectParam) *componentMockExec {
+	return &componentMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type componentMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *componentMockExec) Returns(v ComponentModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *componentMockExec) ReturnsMany(v []ComponentModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *componentMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type componentTagMock struct {
+	mock *Mock
+}
+
+type ComponentTagMockExpectParam interface {
+	ExtractQuery() builder.Query
+	componentTagModel()
+}
+
+func (m *componentTagMock) Expect(query ComponentTagMockExpectParam) *componentTagMockExec {
+	return &componentTagMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type componentTagMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *componentTagMockExec) Returns(v ComponentTagModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *componentTagMockExec) ReturnsMany(v []ComponentTagModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *componentTagMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type tagMock struct {
+	mock *Mock
+}
+
+type TagMockExpectParam interface {
+	ExtractQuery() builder.Query
+	tagModel()
+}
+
+func (m *tagMock) Expect(query TagMockExpectParam) *tagMockExec {
+	return &tagMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type tagMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *tagMockExec) Returns(v TagModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *tagMockExec) ReturnsMany(v []TagModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *tagMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type documentMock struct {
+	mock *Mock
+}
+
+type DocumentMockExpectParam interface {
+	ExtractQuery() builder.Query
+	documentModel()
+}
+
+func (m *documentMock) Expect(query DocumentMockExpectParam) *documentMockExec {
+	return &documentMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type documentMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *documentMockExec) Returns(v DocumentModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *documentMockExec) ReturnsMany(v []DocumentModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *documentMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type documentBlockMock struct {
+	mock *Mock
+}
+
+type DocumentBlockMockExpectParam interface {
+	ExtractQuery() builder.Query
+	documentBlockModel()
+}
+
+func (m *documentBlockMock) Expect(query DocumentBlockMockExpectParam) *documentBlockMockExec {
+	return &documentBlockMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type documentBlockMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *documentBlockMockExec) Returns(v DocumentBlockModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *documentBlockMockExec) ReturnsMany(v []DocumentBlockModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *documentBlockMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type blockMock struct {
+	mock *Mock
+}
+
+type BlockMockExpectParam interface {
+	ExtractQuery() builder.Query
+	blockModel()
+}
+
+func (m *blockMock) Expect(query BlockMockExpectParam) *blockMockExec {
+	return &blockMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type blockMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *blockMockExec) Returns(v BlockModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *blockMockExec) ReturnsMany(v []BlockModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *blockMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
 // --- template models.gotpl ---
 
 // OrganizationModel represents the Organization model and is a wrapper for accessing fields and methods
@@ -980,7 +1571,12 @@ type RawOrganizationModel struct {
 
 // RelationsOrganization holds the relation data separately
 type RelationsOrganization struct {
-	Users []UserModel `json:"users,omitempty"`
+	Users      []UserModel      `json:"users,omitempty"`
+	Components []ComponentModel `json:"components,omitempty"`
+	Tags       []TagModel       `json:"tags,omitempty"`
+	Documents  []DocumentModel  `json:"documents,omitempty"`
+	Block      []BlockModel     `json:"Block,omitempty"`
+	Sessions   []SessionModel   `json:"sessions,omitempty"`
 }
 
 func (r OrganizationModel) Users() (value []UserModel) {
@@ -988,6 +1584,41 @@ func (r OrganizationModel) Users() (value []UserModel) {
 		panic("attempted to access users but did not fetch it using the .With() syntax")
 	}
 	return r.RelationsOrganization.Users
+}
+
+func (r OrganizationModel) Components() (value []ComponentModel) {
+	if r.RelationsOrganization.Components == nil {
+		panic("attempted to access components but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsOrganization.Components
+}
+
+func (r OrganizationModel) Tags() (value []TagModel) {
+	if r.RelationsOrganization.Tags == nil {
+		panic("attempted to access tags but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsOrganization.Tags
+}
+
+func (r OrganizationModel) Documents() (value []DocumentModel) {
+	if r.RelationsOrganization.Documents == nil {
+		panic("attempted to access documents but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsOrganization.Documents
+}
+
+func (r OrganizationModel) Block() (value []BlockModel) {
+	if r.RelationsOrganization.Block == nil {
+		panic("attempted to access block but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsOrganization.Block
+}
+
+func (r OrganizationModel) Sessions() (value []SessionModel) {
+	if r.RelationsOrganization.Sessions == nil {
+		panic("attempted to access sessions but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsOrganization.Sessions
 }
 
 // UserModel represents the User model and is a wrapper for accessing fields and methods
@@ -999,23 +1630,23 @@ type UserModel struct {
 // InnerUser holds the actual data
 type InnerUser struct {
 	ID             string   `json:"id"`
+	OrganizationID string   `json:"organization_id"`
 	Email          string   `json:"email"`
 	Password       string   `json:"password"`
 	Status         string   `json:"status"`
 	Created        DateTime `json:"created"`
 	Updated        DateTime `json:"updated"`
-	OrganizationID string   `json:"organization_id"`
 }
 
 // RawUserModel is a struct for User when used in raw queries
 type RawUserModel struct {
 	ID             RawString   `json:"id"`
+	OrganizationID RawString   `json:"organization_id"`
 	Email          RawString   `json:"email"`
 	Password       RawString   `json:"password"`
 	Status         RawString   `json:"status"`
 	Created        RawDateTime `json:"created"`
 	Updated        RawDateTime `json:"updated"`
-	OrganizationID RawString   `json:"organization_id"`
 }
 
 // RelationsUser holds the relation data separately
@@ -1054,25 +1685,35 @@ type SessionModel struct {
 
 // InnerSession holds the actual data
 type InnerSession struct {
-	ID      string   `json:"id"`
-	Created DateTime `json:"created"`
-	Updated DateTime `json:"updated"`
-	Status  string   `json:"status"`
-	UserID  string   `json:"user_id"`
+	ID             string   `json:"id"`
+	OrganizationID string   `json:"organization_id"`
+	Created        DateTime `json:"created"`
+	Updated        DateTime `json:"updated"`
+	Status         string   `json:"status"`
+	UserID         string   `json:"user_id"`
 }
 
 // RawSessionModel is a struct for Session when used in raw queries
 type RawSessionModel struct {
-	ID      RawString   `json:"id"`
-	Created RawDateTime `json:"created"`
-	Updated RawDateTime `json:"updated"`
-	Status  RawString   `json:"status"`
-	UserID  RawString   `json:"user_id"`
+	ID             RawString   `json:"id"`
+	OrganizationID RawString   `json:"organization_id"`
+	Created        RawDateTime `json:"created"`
+	Updated        RawDateTime `json:"updated"`
+	Status         RawString   `json:"status"`
+	UserID         RawString   `json:"user_id"`
 }
 
 // RelationsSession holds the relation data separately
 type RelationsSession struct {
-	User *UserModel `json:"user,omitempty"`
+	Organization *OrganizationModel `json:"organization,omitempty"`
+	User         *UserModel         `json:"user,omitempty"`
+}
+
+func (r SessionModel) Organization() (value *OrganizationModel) {
+	if r.RelationsSession.Organization == nil {
+		panic("attempted to access organization but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsSession.Organization
 }
 
 func (r SessionModel) User() (value *UserModel) {
@@ -1278,6 +1919,280 @@ func (r UserRoleModel) Role() (value *RoleModel) {
 	return r.RelationsUserRole.Role
 }
 
+// ComponentModel represents the Component model and is a wrapper for accessing fields and methods
+type ComponentModel struct {
+	InnerComponent
+	RelationsComponent
+}
+
+// InnerComponent holds the actual data
+type InnerComponent struct {
+	ID             string   `json:"id"`
+	OrganizationID string   `json:"organization_id"`
+	Created        DateTime `json:"created"`
+	Updated        DateTime `json:"updated"`
+	Name           string   `json:"name"`
+	Type           string   `json:"type"`
+	Provider       string   `json:"provider"`
+}
+
+// RawComponentModel is a struct for Component when used in raw queries
+type RawComponentModel struct {
+	ID             RawString   `json:"id"`
+	OrganizationID RawString   `json:"organization_id"`
+	Created        RawDateTime `json:"created"`
+	Updated        RawDateTime `json:"updated"`
+	Name           RawString   `json:"name"`
+	Type           RawString   `json:"type"`
+	Provider       RawString   `json:"provider"`
+}
+
+// RelationsComponent holds the relation data separately
+type RelationsComponent struct {
+	Organization *OrganizationModel  `json:"organization,omitempty"`
+	Tags         []ComponentTagModel `json:"tags,omitempty"`
+}
+
+func (r ComponentModel) Organization() (value *OrganizationModel) {
+	if r.RelationsComponent.Organization == nil {
+		panic("attempted to access organization but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsComponent.Organization
+}
+
+func (r ComponentModel) Tags() (value []ComponentTagModel) {
+	if r.RelationsComponent.Tags == nil {
+		panic("attempted to access tags but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsComponent.Tags
+}
+
+// ComponentTagModel represents the ComponentTag model and is a wrapper for accessing fields and methods
+type ComponentTagModel struct {
+	InnerComponentTag
+	RelationsComponentTag
+}
+
+// InnerComponentTag holds the actual data
+type InnerComponentTag struct {
+	ID          string   `json:"id"`
+	Created     DateTime `json:"created"`
+	Updated     DateTime `json:"updated"`
+	ComponentID string   `json:"component_id"`
+	TagID       string   `json:"tag_id"`
+}
+
+// RawComponentTagModel is a struct for ComponentTag when used in raw queries
+type RawComponentTagModel struct {
+	ID          RawString   `json:"id"`
+	Created     RawDateTime `json:"created"`
+	Updated     RawDateTime `json:"updated"`
+	ComponentID RawString   `json:"component_id"`
+	TagID       RawString   `json:"tag_id"`
+}
+
+// RelationsComponentTag holds the relation data separately
+type RelationsComponentTag struct {
+	Component *ComponentModel `json:"component,omitempty"`
+	Tag       *TagModel       `json:"tag,omitempty"`
+}
+
+func (r ComponentTagModel) Component() (value *ComponentModel) {
+	if r.RelationsComponentTag.Component == nil {
+		panic("attempted to access component but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsComponentTag.Component
+}
+
+func (r ComponentTagModel) Tag() (value *TagModel) {
+	if r.RelationsComponentTag.Tag == nil {
+		panic("attempted to access tag but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsComponentTag.Tag
+}
+
+// TagModel represents the Tag model and is a wrapper for accessing fields and methods
+type TagModel struct {
+	InnerTag
+	RelationsTag
+}
+
+// InnerTag holds the actual data
+type InnerTag struct {
+	ID             string   `json:"id"`
+	OrganizationID string   `json:"organization_id"`
+	Created        DateTime `json:"created"`
+	Updated        DateTime `json:"updated"`
+	Name           string   `json:"name"`
+}
+
+// RawTagModel is a struct for Tag when used in raw queries
+type RawTagModel struct {
+	ID             RawString   `json:"id"`
+	OrganizationID RawString   `json:"organization_id"`
+	Created        RawDateTime `json:"created"`
+	Updated        RawDateTime `json:"updated"`
+	Name           RawString   `json:"name"`
+}
+
+// RelationsTag holds the relation data separately
+type RelationsTag struct {
+	Organization *OrganizationModel  `json:"organization,omitempty"`
+	ComponentTag []ComponentTagModel `json:"ComponentTag,omitempty"`
+}
+
+func (r TagModel) Organization() (value *OrganizationModel) {
+	if r.RelationsTag.Organization == nil {
+		panic("attempted to access organization but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsTag.Organization
+}
+
+func (r TagModel) ComponentTag() (value []ComponentTagModel) {
+	if r.RelationsTag.ComponentTag == nil {
+		panic("attempted to access componentTag but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsTag.ComponentTag
+}
+
+// DocumentModel represents the Document model and is a wrapper for accessing fields and methods
+type DocumentModel struct {
+	InnerDocument
+	RelationsDocument
+}
+
+// InnerDocument holds the actual data
+type InnerDocument struct {
+	ID             string   `json:"id"`
+	OrganizationID string   `json:"organization_id"`
+	Created        DateTime `json:"created"`
+	Updated        DateTime `json:"updated"`
+	Name           string   `json:"name"`
+	Content        JSON     `json:"content"`
+}
+
+// RawDocumentModel is a struct for Document when used in raw queries
+type RawDocumentModel struct {
+	ID             RawString   `json:"id"`
+	OrganizationID RawString   `json:"organization_id"`
+	Created        RawDateTime `json:"created"`
+	Updated        RawDateTime `json:"updated"`
+	Name           RawString   `json:"name"`
+	Content        RawJSON     `json:"content"`
+}
+
+// RelationsDocument holds the relation data separately
+type RelationsDocument struct {
+	Organization *OrganizationModel   `json:"organization,omitempty"`
+	Blocks       []DocumentBlockModel `json:"blocks,omitempty"`
+}
+
+func (r DocumentModel) Organization() (value *OrganizationModel) {
+	if r.RelationsDocument.Organization == nil {
+		panic("attempted to access organization but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsDocument.Organization
+}
+
+func (r DocumentModel) Blocks() (value []DocumentBlockModel) {
+	if r.RelationsDocument.Blocks == nil {
+		panic("attempted to access blocks but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsDocument.Blocks
+}
+
+// DocumentBlockModel represents the DocumentBlock model and is a wrapper for accessing fields and methods
+type DocumentBlockModel struct {
+	InnerDocumentBlock
+	RelationsDocumentBlock
+}
+
+// InnerDocumentBlock holds the actual data
+type InnerDocumentBlock struct {
+	ID         string   `json:"id"`
+	Created    DateTime `json:"created"`
+	Updated    DateTime `json:"updated"`
+	DocumentID string   `json:"document_id"`
+	BlockID    string   `json:"block_id"`
+	Position   int      `json:"position"`
+}
+
+// RawDocumentBlockModel is a struct for DocumentBlock when used in raw queries
+type RawDocumentBlockModel struct {
+	ID         RawString   `json:"id"`
+	Created    RawDateTime `json:"created"`
+	Updated    RawDateTime `json:"updated"`
+	DocumentID RawString   `json:"document_id"`
+	BlockID    RawString   `json:"block_id"`
+	Position   RawInt      `json:"position"`
+}
+
+// RelationsDocumentBlock holds the relation data separately
+type RelationsDocumentBlock struct {
+	Document *DocumentModel `json:"document,omitempty"`
+	Block    *BlockModel    `json:"block,omitempty"`
+}
+
+func (r DocumentBlockModel) Document() (value *DocumentModel) {
+	if r.RelationsDocumentBlock.Document == nil {
+		panic("attempted to access document but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsDocumentBlock.Document
+}
+
+func (r DocumentBlockModel) Block() (value *BlockModel) {
+	if r.RelationsDocumentBlock.Block == nil {
+		panic("attempted to access block but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsDocumentBlock.Block
+}
+
+// BlockModel represents the Block model and is a wrapper for accessing fields and methods
+type BlockModel struct {
+	InnerBlock
+	RelationsBlock
+}
+
+// InnerBlock holds the actual data
+type InnerBlock struct {
+	ID             string   `json:"id"`
+	OrganizationID string   `json:"organization_id"`
+	Created        DateTime `json:"created"`
+	Updated        DateTime `json:"updated"`
+	Type           string   `json:"type"`
+	Content        JSON     `json:"content"`
+}
+
+// RawBlockModel is a struct for Block when used in raw queries
+type RawBlockModel struct {
+	ID             RawString   `json:"id"`
+	OrganizationID RawString   `json:"organization_id"`
+	Created        RawDateTime `json:"created"`
+	Updated        RawDateTime `json:"updated"`
+	Type           RawString   `json:"type"`
+	Content        RawJSON     `json:"content"`
+}
+
+// RelationsBlock holds the relation data separately
+type RelationsBlock struct {
+	Organization *OrganizationModel   `json:"organization,omitempty"`
+	Documents    []DocumentBlockModel `json:"documents,omitempty"`
+}
+
+func (r BlockModel) Organization() (value *OrganizationModel) {
+	if r.RelationsBlock.Organization == nil {
+		panic("attempted to access organization but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsBlock.Organization
+}
+
+func (r BlockModel) Documents() (value []DocumentBlockModel) {
+	if r.RelationsBlock.Documents == nil {
+		panic("attempted to access documents but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsBlock.Documents
+}
+
 // --- template query.gotpl ---
 
 // Organization acts as a namespaces to access query methods for the Organization model
@@ -1307,6 +2222,16 @@ type organizationQuery struct {
 	Name organizationQueryNameString
 
 	Users organizationQueryUsersRelations
+
+	Components organizationQueryComponentsRelations
+
+	Tags organizationQueryTagsRelations
+
+	Documents organizationQueryDocumentsRelations
+
+	Block organizationQueryBlockRelations
+
+	Sessions organizationQuerySessionsRelations
 }
 
 func (organizationQuery) Not(params ...OrganizationWhereParam) organizationDefaultParam {
@@ -2848,6 +3773,866 @@ func (r organizationQueryUsersUser) Field() organizationPrismaFields {
 	return organizationFieldUsers
 }
 
+// base struct
+type organizationQueryComponentsComponent struct{}
+
+type organizationQueryComponentsRelations struct{}
+
+// Organization -> Components
+//
+// @relation
+// @required
+func (organizationQueryComponentsRelations) Some(
+	params ...ComponentWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "components",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Organization -> Components
+//
+// @relation
+// @required
+func (organizationQueryComponentsRelations) Every(
+	params ...ComponentWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "components",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Organization -> Components
+//
+// @relation
+// @required
+func (organizationQueryComponentsRelations) None(
+	params ...ComponentWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "components",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (organizationQueryComponentsRelations) Fetch(
+
+	params ...ComponentWhereParam,
+
+) organizationToComponentsFindMany {
+	var v organizationToComponentsFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "components"
+	v.query.Outputs = componentOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r organizationQueryComponentsRelations) Link(
+	params ...ComponentWhereParam,
+) organizationSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationSetParam{
+		data: builder.Field{
+			Name: "components",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQueryComponentsRelations) Unlink(
+	params ...ComponentWhereParam,
+) organizationSetParam {
+	var v organizationSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = organizationSetParam{
+		data: builder.Field{
+			Name: "components",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r organizationQueryComponentsComponent) Field() organizationPrismaFields {
+	return organizationFieldComponents
+}
+
+// base struct
+type organizationQueryTagsTag struct{}
+
+type organizationQueryTagsRelations struct{}
+
+// Organization -> Tags
+//
+// @relation
+// @required
+func (organizationQueryTagsRelations) Some(
+	params ...TagWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "tags",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Organization -> Tags
+//
+// @relation
+// @required
+func (organizationQueryTagsRelations) Every(
+	params ...TagWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "tags",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Organization -> Tags
+//
+// @relation
+// @required
+func (organizationQueryTagsRelations) None(
+	params ...TagWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "tags",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (organizationQueryTagsRelations) Fetch(
+
+	params ...TagWhereParam,
+
+) organizationToTagsFindMany {
+	var v organizationToTagsFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "tags"
+	v.query.Outputs = tagOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r organizationQueryTagsRelations) Link(
+	params ...TagWhereParam,
+) organizationSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationSetParam{
+		data: builder.Field{
+			Name: "tags",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQueryTagsRelations) Unlink(
+	params ...TagWhereParam,
+) organizationSetParam {
+	var v organizationSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = organizationSetParam{
+		data: builder.Field{
+			Name: "tags",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r organizationQueryTagsTag) Field() organizationPrismaFields {
+	return organizationFieldTags
+}
+
+// base struct
+type organizationQueryDocumentsDocument struct{}
+
+type organizationQueryDocumentsRelations struct{}
+
+// Organization -> Documents
+//
+// @relation
+// @required
+func (organizationQueryDocumentsRelations) Some(
+	params ...DocumentWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "documents",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Organization -> Documents
+//
+// @relation
+// @required
+func (organizationQueryDocumentsRelations) Every(
+	params ...DocumentWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "documents",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Organization -> Documents
+//
+// @relation
+// @required
+func (organizationQueryDocumentsRelations) None(
+	params ...DocumentWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "documents",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (organizationQueryDocumentsRelations) Fetch(
+
+	params ...DocumentWhereParam,
+
+) organizationToDocumentsFindMany {
+	var v organizationToDocumentsFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "documents"
+	v.query.Outputs = documentOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r organizationQueryDocumentsRelations) Link(
+	params ...DocumentWhereParam,
+) organizationSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationSetParam{
+		data: builder.Field{
+			Name: "documents",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQueryDocumentsRelations) Unlink(
+	params ...DocumentWhereParam,
+) organizationSetParam {
+	var v organizationSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = organizationSetParam{
+		data: builder.Field{
+			Name: "documents",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r organizationQueryDocumentsDocument) Field() organizationPrismaFields {
+	return organizationFieldDocuments
+}
+
+// base struct
+type organizationQueryBlockBlock struct{}
+
+type organizationQueryBlockRelations struct{}
+
+// Organization -> Block
+//
+// @relation
+// @required
+func (organizationQueryBlockRelations) Some(
+	params ...BlockWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "Block",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Organization -> Block
+//
+// @relation
+// @required
+func (organizationQueryBlockRelations) Every(
+	params ...BlockWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "Block",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Organization -> Block
+//
+// @relation
+// @required
+func (organizationQueryBlockRelations) None(
+	params ...BlockWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "Block",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (organizationQueryBlockRelations) Fetch(
+
+	params ...BlockWhereParam,
+
+) organizationToBlockFindMany {
+	var v organizationToBlockFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "Block"
+	v.query.Outputs = blockOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r organizationQueryBlockRelations) Link(
+	params ...BlockWhereParam,
+) organizationSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationSetParam{
+		data: builder.Field{
+			Name: "Block",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQueryBlockRelations) Unlink(
+	params ...BlockWhereParam,
+) organizationSetParam {
+	var v organizationSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = organizationSetParam{
+		data: builder.Field{
+			Name: "Block",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r organizationQueryBlockBlock) Field() organizationPrismaFields {
+	return organizationFieldBlock
+}
+
+// base struct
+type organizationQuerySessionsSession struct{}
+
+type organizationQuerySessionsRelations struct{}
+
+// Organization -> Sessions
+//
+// @relation
+// @required
+func (organizationQuerySessionsRelations) Some(
+	params ...SessionWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "sessions",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Organization -> Sessions
+//
+// @relation
+// @required
+func (organizationQuerySessionsRelations) Every(
+	params ...SessionWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "sessions",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Organization -> Sessions
+//
+// @relation
+// @required
+func (organizationQuerySessionsRelations) None(
+	params ...SessionWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "sessions",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (organizationQuerySessionsRelations) Fetch(
+
+	params ...SessionWhereParam,
+
+) organizationToSessionsFindMany {
+	var v organizationToSessionsFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "sessions"
+	v.query.Outputs = sessionOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r organizationQuerySessionsRelations) Link(
+	params ...SessionWhereParam,
+) organizationSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationSetParam{
+		data: builder.Field{
+			Name: "sessions",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQuerySessionsRelations) Unlink(
+	params ...SessionWhereParam,
+) organizationSetParam {
+	var v organizationSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = organizationSetParam{
+		data: builder.Field{
+			Name: "sessions",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r organizationQuerySessionsSession) Field() organizationPrismaFields {
+	return organizationFieldSessions
+}
+
 // User acts as a namespaces to access query methods for the User model
 var User = userQuery{}
 
@@ -2858,6 +4643,13 @@ type userQuery struct {
 	//
 	// @required
 	ID userQueryIDString
+
+	Organization userQueryOrganizationRelations
+
+	// OrganizationID
+	//
+	// @required
+	OrganizationID userQueryOrganizationIDString
 
 	// Email
 	//
@@ -2884,13 +4676,6 @@ type userQuery struct {
 	//
 	// @required
 	Updated userQueryUpdatedDateTime
-
-	Organization userQueryOrganizationRelations
-
-	// OrganizationID
-	//
-	// @required
-	OrganizationID userQueryOrganizationIDString
 
 	Roles userQueryRolesRelations
 
@@ -3293,6 +5078,441 @@ func (r userQueryIDString) HasSuffixIfPresent(value *string) userParamUnique {
 
 func (r userQueryIDString) Field() userPrismaFields {
 	return userFieldID
+}
+
+// base struct
+type userQueryOrganizationOrganization struct{}
+
+type userQueryOrganizationRelations struct{}
+
+// User -> Organization
+//
+// @relation
+// @required
+func (userQueryOrganizationRelations) Where(
+	params ...OrganizationWhereParam,
+) userDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return userDefaultParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (userQueryOrganizationRelations) Fetch() userToOrganizationFindUnique {
+	var v userToOrganizationFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "organization"
+	v.query.Outputs = organizationOutput
+
+	return v
+}
+
+func (r userQueryOrganizationRelations) Link(
+	params OrganizationWhereParam,
+) userWithPrismaOrganizationSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return userWithPrismaOrganizationSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return userWithPrismaOrganizationSetParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r userQueryOrganizationRelations) Unlink() userWithPrismaOrganizationSetParam {
+	var v userWithPrismaOrganizationSetParam
+
+	v = userWithPrismaOrganizationSetParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r userQueryOrganizationOrganization) Field() userPrismaFields {
+	return userFieldOrganization
+}
+
+// base struct
+type userQueryOrganizationIDString struct{}
+
+// Set the required value of OrganizationID
+func (r userQueryOrganizationIDString) Set(value string) userSetParam {
+
+	return userSetParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of OrganizationID dynamically
+func (r userQueryOrganizationIDString) SetIfPresent(value *String) userSetParam {
+	if value == nil {
+		return userSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r userQueryOrganizationIDString) Equals(value string) userWithPrismaOrganizationIDEqualsParam {
+
+	return userWithPrismaOrganizationIDEqualsParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r userQueryOrganizationIDString) EqualsIfPresent(value *string) userWithPrismaOrganizationIDEqualsParam {
+	if value == nil {
+		return userWithPrismaOrganizationIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r userQueryOrganizationIDString) Order(direction SortOrder) userDefaultParam {
+	return userDefaultParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: direction,
+		},
+	}
+}
+
+func (r userQueryOrganizationIDString) Cursor(cursor string) userCursorParam {
+	return userCursorParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r userQueryOrganizationIDString) In(value []string) userDefaultParam {
+	return userDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r userQueryOrganizationIDString) InIfPresent(value []string) userDefaultParam {
+	if value == nil {
+		return userDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r userQueryOrganizationIDString) NotIn(value []string) userDefaultParam {
+	return userDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r userQueryOrganizationIDString) NotInIfPresent(value []string) userDefaultParam {
+	if value == nil {
+		return userDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r userQueryOrganizationIDString) Lt(value string) userDefaultParam {
+	return userDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r userQueryOrganizationIDString) LtIfPresent(value *string) userDefaultParam {
+	if value == nil {
+		return userDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r userQueryOrganizationIDString) Lte(value string) userDefaultParam {
+	return userDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r userQueryOrganizationIDString) LteIfPresent(value *string) userDefaultParam {
+	if value == nil {
+		return userDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r userQueryOrganizationIDString) Gt(value string) userDefaultParam {
+	return userDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r userQueryOrganizationIDString) GtIfPresent(value *string) userDefaultParam {
+	if value == nil {
+		return userDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r userQueryOrganizationIDString) Gte(value string) userDefaultParam {
+	return userDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r userQueryOrganizationIDString) GteIfPresent(value *string) userDefaultParam {
+	if value == nil {
+		return userDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r userQueryOrganizationIDString) Contains(value string) userDefaultParam {
+	return userDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r userQueryOrganizationIDString) ContainsIfPresent(value *string) userDefaultParam {
+	if value == nil {
+		return userDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r userQueryOrganizationIDString) StartsWith(value string) userDefaultParam {
+	return userDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r userQueryOrganizationIDString) StartsWithIfPresent(value *string) userDefaultParam {
+	if value == nil {
+		return userDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r userQueryOrganizationIDString) EndsWith(value string) userDefaultParam {
+	return userDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r userQueryOrganizationIDString) EndsWithIfPresent(value *string) userDefaultParam {
+	if value == nil {
+		return userDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r userQueryOrganizationIDString) Mode(value QueryMode) userDefaultParam {
+	return userDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r userQueryOrganizationIDString) ModeIfPresent(value *QueryMode) userDefaultParam {
+	if value == nil {
+		return userDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r userQueryOrganizationIDString) Not(value string) userDefaultParam {
+	return userDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r userQueryOrganizationIDString) NotIfPresent(value *string) userDefaultParam {
+	if value == nil {
+		return userDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r userQueryOrganizationIDString) HasPrefix(value string) userDefaultParam {
+	return userDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r userQueryOrganizationIDString) HasPrefixIfPresent(value *string) userDefaultParam {
+	if value == nil {
+		return userDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r userQueryOrganizationIDString) HasSuffix(value string) userDefaultParam {
+	return userDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r userQueryOrganizationIDString) HasSuffixIfPresent(value *string) userDefaultParam {
+	if value == nil {
+		return userDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r userQueryOrganizationIDString) Field() userPrismaFields {
+	return userFieldOrganizationID
 }
 
 // base struct
@@ -4959,441 +7179,6 @@ func (r userQueryUpdatedDateTime) Field() userPrismaFields {
 }
 
 // base struct
-type userQueryOrganizationOrganization struct{}
-
-type userQueryOrganizationRelations struct{}
-
-// User -> Organization
-//
-// @relation
-// @required
-func (userQueryOrganizationRelations) Where(
-	params ...OrganizationWhereParam,
-) userDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return userDefaultParam{
-		data: builder.Field{
-			Name: "organization",
-			Fields: []builder.Field{
-				{
-					Name:   "is",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-func (userQueryOrganizationRelations) Fetch() userToOrganizationFindUnique {
-	var v userToOrganizationFindUnique
-
-	v.query.Operation = "query"
-	v.query.Method = "organization"
-	v.query.Outputs = organizationOutput
-
-	return v
-}
-
-func (r userQueryOrganizationRelations) Link(
-	params OrganizationWhereParam,
-) userWithPrismaOrganizationSetParam {
-	var fields []builder.Field
-
-	f := params.field()
-	if f.Fields == nil && f.Value == nil {
-		return userWithPrismaOrganizationSetParam{}
-	}
-
-	fields = append(fields, f)
-
-	return userWithPrismaOrganizationSetParam{
-		data: builder.Field{
-			Name: "organization",
-			Fields: []builder.Field{
-				{
-					Name:   "connect",
-					Fields: builder.TransformEquals(fields),
-				},
-			},
-		},
-	}
-}
-
-func (r userQueryOrganizationRelations) Unlink() userWithPrismaOrganizationSetParam {
-	var v userWithPrismaOrganizationSetParam
-
-	v = userWithPrismaOrganizationSetParam{
-		data: builder.Field{
-			Name: "organization",
-			Fields: []builder.Field{
-				{
-					Name:  "disconnect",
-					Value: true,
-				},
-			},
-		},
-	}
-
-	return v
-}
-
-func (r userQueryOrganizationOrganization) Field() userPrismaFields {
-	return userFieldOrganization
-}
-
-// base struct
-type userQueryOrganizationIDString struct{}
-
-// Set the required value of OrganizationID
-func (r userQueryOrganizationIDString) Set(value string) userSetParam {
-
-	return userSetParam{
-		data: builder.Field{
-			Name:  "organization_id",
-			Value: value,
-		},
-	}
-
-}
-
-// Set the optional value of OrganizationID dynamically
-func (r userQueryOrganizationIDString) SetIfPresent(value *String) userSetParam {
-	if value == nil {
-		return userSetParam{}
-	}
-
-	return r.Set(*value)
-}
-
-func (r userQueryOrganizationIDString) Equals(value string) userWithPrismaOrganizationIDEqualsParam {
-
-	return userWithPrismaOrganizationIDEqualsParam{
-		data: builder.Field{
-			Name: "organization_id",
-			Fields: []builder.Field{
-				{
-					Name:  "equals",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r userQueryOrganizationIDString) EqualsIfPresent(value *string) userWithPrismaOrganizationIDEqualsParam {
-	if value == nil {
-		return userWithPrismaOrganizationIDEqualsParam{}
-	}
-	return r.Equals(*value)
-}
-
-func (r userQueryOrganizationIDString) Order(direction SortOrder) userDefaultParam {
-	return userDefaultParam{
-		data: builder.Field{
-			Name:  "organization_id",
-			Value: direction,
-		},
-	}
-}
-
-func (r userQueryOrganizationIDString) Cursor(cursor string) userCursorParam {
-	return userCursorParam{
-		data: builder.Field{
-			Name:  "organization_id",
-			Value: cursor,
-		},
-	}
-}
-
-func (r userQueryOrganizationIDString) In(value []string) userDefaultParam {
-	return userDefaultParam{
-		data: builder.Field{
-			Name: "organization_id",
-			Fields: []builder.Field{
-				{
-					Name:  "in",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r userQueryOrganizationIDString) InIfPresent(value []string) userDefaultParam {
-	if value == nil {
-		return userDefaultParam{}
-	}
-	return r.In(value)
-}
-
-func (r userQueryOrganizationIDString) NotIn(value []string) userDefaultParam {
-	return userDefaultParam{
-		data: builder.Field{
-			Name: "organization_id",
-			Fields: []builder.Field{
-				{
-					Name:  "notIn",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r userQueryOrganizationIDString) NotInIfPresent(value []string) userDefaultParam {
-	if value == nil {
-		return userDefaultParam{}
-	}
-	return r.NotIn(value)
-}
-
-func (r userQueryOrganizationIDString) Lt(value string) userDefaultParam {
-	return userDefaultParam{
-		data: builder.Field{
-			Name: "organization_id",
-			Fields: []builder.Field{
-				{
-					Name:  "lt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r userQueryOrganizationIDString) LtIfPresent(value *string) userDefaultParam {
-	if value == nil {
-		return userDefaultParam{}
-	}
-	return r.Lt(*value)
-}
-
-func (r userQueryOrganizationIDString) Lte(value string) userDefaultParam {
-	return userDefaultParam{
-		data: builder.Field{
-			Name: "organization_id",
-			Fields: []builder.Field{
-				{
-					Name:  "lte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r userQueryOrganizationIDString) LteIfPresent(value *string) userDefaultParam {
-	if value == nil {
-		return userDefaultParam{}
-	}
-	return r.Lte(*value)
-}
-
-func (r userQueryOrganizationIDString) Gt(value string) userDefaultParam {
-	return userDefaultParam{
-		data: builder.Field{
-			Name: "organization_id",
-			Fields: []builder.Field{
-				{
-					Name:  "gt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r userQueryOrganizationIDString) GtIfPresent(value *string) userDefaultParam {
-	if value == nil {
-		return userDefaultParam{}
-	}
-	return r.Gt(*value)
-}
-
-func (r userQueryOrganizationIDString) Gte(value string) userDefaultParam {
-	return userDefaultParam{
-		data: builder.Field{
-			Name: "organization_id",
-			Fields: []builder.Field{
-				{
-					Name:  "gte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r userQueryOrganizationIDString) GteIfPresent(value *string) userDefaultParam {
-	if value == nil {
-		return userDefaultParam{}
-	}
-	return r.Gte(*value)
-}
-
-func (r userQueryOrganizationIDString) Contains(value string) userDefaultParam {
-	return userDefaultParam{
-		data: builder.Field{
-			Name: "organization_id",
-			Fields: []builder.Field{
-				{
-					Name:  "contains",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r userQueryOrganizationIDString) ContainsIfPresent(value *string) userDefaultParam {
-	if value == nil {
-		return userDefaultParam{}
-	}
-	return r.Contains(*value)
-}
-
-func (r userQueryOrganizationIDString) StartsWith(value string) userDefaultParam {
-	return userDefaultParam{
-		data: builder.Field{
-			Name: "organization_id",
-			Fields: []builder.Field{
-				{
-					Name:  "startsWith",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r userQueryOrganizationIDString) StartsWithIfPresent(value *string) userDefaultParam {
-	if value == nil {
-		return userDefaultParam{}
-	}
-	return r.StartsWith(*value)
-}
-
-func (r userQueryOrganizationIDString) EndsWith(value string) userDefaultParam {
-	return userDefaultParam{
-		data: builder.Field{
-			Name: "organization_id",
-			Fields: []builder.Field{
-				{
-					Name:  "endsWith",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r userQueryOrganizationIDString) EndsWithIfPresent(value *string) userDefaultParam {
-	if value == nil {
-		return userDefaultParam{}
-	}
-	return r.EndsWith(*value)
-}
-
-func (r userQueryOrganizationIDString) Mode(value QueryMode) userDefaultParam {
-	return userDefaultParam{
-		data: builder.Field{
-			Name: "organization_id",
-			Fields: []builder.Field{
-				{
-					Name:  "mode",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r userQueryOrganizationIDString) ModeIfPresent(value *QueryMode) userDefaultParam {
-	if value == nil {
-		return userDefaultParam{}
-	}
-	return r.Mode(*value)
-}
-
-func (r userQueryOrganizationIDString) Not(value string) userDefaultParam {
-	return userDefaultParam{
-		data: builder.Field{
-			Name: "organization_id",
-			Fields: []builder.Field{
-				{
-					Name:  "not",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r userQueryOrganizationIDString) NotIfPresent(value *string) userDefaultParam {
-	if value == nil {
-		return userDefaultParam{}
-	}
-	return r.Not(*value)
-}
-
-// deprecated: Use StartsWith instead.
-
-func (r userQueryOrganizationIDString) HasPrefix(value string) userDefaultParam {
-	return userDefaultParam{
-		data: builder.Field{
-			Name: "organization_id",
-			Fields: []builder.Field{
-				{
-					Name:  "starts_with",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use StartsWithIfPresent instead.
-func (r userQueryOrganizationIDString) HasPrefixIfPresent(value *string) userDefaultParam {
-	if value == nil {
-		return userDefaultParam{}
-	}
-	return r.HasPrefix(*value)
-}
-
-// deprecated: Use EndsWith instead.
-
-func (r userQueryOrganizationIDString) HasSuffix(value string) userDefaultParam {
-	return userDefaultParam{
-		data: builder.Field{
-			Name: "organization_id",
-			Fields: []builder.Field{
-				{
-					Name:  "ends_with",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use EndsWithIfPresent instead.
-func (r userQueryOrganizationIDString) HasSuffixIfPresent(value *string) userDefaultParam {
-	if value == nil {
-		return userDefaultParam{}
-	}
-	return r.HasSuffix(*value)
-}
-
-func (r userQueryOrganizationIDString) Field() userPrismaFields {
-	return userFieldOrganizationID
-}
-
-// base struct
 type userQueryRolesUserRole struct{}
 
 type userQueryRolesRelations struct{}
@@ -5747,6 +7532,13 @@ type sessionQuery struct {
 	//
 	// @required
 	ID sessionQueryIDString
+
+	Organization sessionQueryOrganizationRelations
+
+	// OrganizationID
+	//
+	// @required
+	OrganizationID sessionQueryOrganizationIDString
 
 	// Created
 	//
@@ -6167,6 +7959,441 @@ func (r sessionQueryIDString) HasSuffixIfPresent(value *string) sessionParamUniq
 
 func (r sessionQueryIDString) Field() sessionPrismaFields {
 	return sessionFieldID
+}
+
+// base struct
+type sessionQueryOrganizationOrganization struct{}
+
+type sessionQueryOrganizationRelations struct{}
+
+// Session -> Organization
+//
+// @relation
+// @required
+func (sessionQueryOrganizationRelations) Where(
+	params ...OrganizationWhereParam,
+) sessionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return sessionDefaultParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (sessionQueryOrganizationRelations) Fetch() sessionToOrganizationFindUnique {
+	var v sessionToOrganizationFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "organization"
+	v.query.Outputs = organizationOutput
+
+	return v
+}
+
+func (r sessionQueryOrganizationRelations) Link(
+	params OrganizationWhereParam,
+) sessionWithPrismaOrganizationSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return sessionWithPrismaOrganizationSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return sessionWithPrismaOrganizationSetParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r sessionQueryOrganizationRelations) Unlink() sessionWithPrismaOrganizationSetParam {
+	var v sessionWithPrismaOrganizationSetParam
+
+	v = sessionWithPrismaOrganizationSetParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r sessionQueryOrganizationOrganization) Field() sessionPrismaFields {
+	return sessionFieldOrganization
+}
+
+// base struct
+type sessionQueryOrganizationIDString struct{}
+
+// Set the required value of OrganizationID
+func (r sessionQueryOrganizationIDString) Set(value string) sessionSetParam {
+
+	return sessionSetParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of OrganizationID dynamically
+func (r sessionQueryOrganizationIDString) SetIfPresent(value *String) sessionSetParam {
+	if value == nil {
+		return sessionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r sessionQueryOrganizationIDString) Equals(value string) sessionWithPrismaOrganizationIDEqualsParam {
+
+	return sessionWithPrismaOrganizationIDEqualsParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r sessionQueryOrganizationIDString) EqualsIfPresent(value *string) sessionWithPrismaOrganizationIDEqualsParam {
+	if value == nil {
+		return sessionWithPrismaOrganizationIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r sessionQueryOrganizationIDString) Order(direction SortOrder) sessionDefaultParam {
+	return sessionDefaultParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: direction,
+		},
+	}
+}
+
+func (r sessionQueryOrganizationIDString) Cursor(cursor string) sessionCursorParam {
+	return sessionCursorParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r sessionQueryOrganizationIDString) In(value []string) sessionDefaultParam {
+	return sessionDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r sessionQueryOrganizationIDString) InIfPresent(value []string) sessionDefaultParam {
+	if value == nil {
+		return sessionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r sessionQueryOrganizationIDString) NotIn(value []string) sessionDefaultParam {
+	return sessionDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r sessionQueryOrganizationIDString) NotInIfPresent(value []string) sessionDefaultParam {
+	if value == nil {
+		return sessionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r sessionQueryOrganizationIDString) Lt(value string) sessionDefaultParam {
+	return sessionDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r sessionQueryOrganizationIDString) LtIfPresent(value *string) sessionDefaultParam {
+	if value == nil {
+		return sessionDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r sessionQueryOrganizationIDString) Lte(value string) sessionDefaultParam {
+	return sessionDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r sessionQueryOrganizationIDString) LteIfPresent(value *string) sessionDefaultParam {
+	if value == nil {
+		return sessionDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r sessionQueryOrganizationIDString) Gt(value string) sessionDefaultParam {
+	return sessionDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r sessionQueryOrganizationIDString) GtIfPresent(value *string) sessionDefaultParam {
+	if value == nil {
+		return sessionDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r sessionQueryOrganizationIDString) Gte(value string) sessionDefaultParam {
+	return sessionDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r sessionQueryOrganizationIDString) GteIfPresent(value *string) sessionDefaultParam {
+	if value == nil {
+		return sessionDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r sessionQueryOrganizationIDString) Contains(value string) sessionDefaultParam {
+	return sessionDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r sessionQueryOrganizationIDString) ContainsIfPresent(value *string) sessionDefaultParam {
+	if value == nil {
+		return sessionDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r sessionQueryOrganizationIDString) StartsWith(value string) sessionDefaultParam {
+	return sessionDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r sessionQueryOrganizationIDString) StartsWithIfPresent(value *string) sessionDefaultParam {
+	if value == nil {
+		return sessionDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r sessionQueryOrganizationIDString) EndsWith(value string) sessionDefaultParam {
+	return sessionDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r sessionQueryOrganizationIDString) EndsWithIfPresent(value *string) sessionDefaultParam {
+	if value == nil {
+		return sessionDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r sessionQueryOrganizationIDString) Mode(value QueryMode) sessionDefaultParam {
+	return sessionDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r sessionQueryOrganizationIDString) ModeIfPresent(value *QueryMode) sessionDefaultParam {
+	if value == nil {
+		return sessionDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r sessionQueryOrganizationIDString) Not(value string) sessionDefaultParam {
+	return sessionDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r sessionQueryOrganizationIDString) NotIfPresent(value *string) sessionDefaultParam {
+	if value == nil {
+		return sessionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r sessionQueryOrganizationIDString) HasPrefix(value string) sessionDefaultParam {
+	return sessionDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r sessionQueryOrganizationIDString) HasPrefixIfPresent(value *string) sessionDefaultParam {
+	if value == nil {
+		return sessionDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r sessionQueryOrganizationIDString) HasSuffix(value string) sessionDefaultParam {
+	return sessionDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r sessionQueryOrganizationIDString) HasSuffixIfPresent(value *string) sessionDefaultParam {
+	if value == nil {
+		return sessionDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r sessionQueryOrganizationIDString) Field() sessionPrismaFields {
+	return sessionFieldOrganizationID
 }
 
 // base struct
@@ -11827,6 +14054,7 @@ type permissionQuery struct {
 	// Name
 	//
 	// @required
+	// @unique
 	Name permissionQueryNameString
 
 	Roles permissionQueryRolesRelations
@@ -12876,9 +15104,9 @@ func (r permissionQueryNameString) SetIfPresent(value *String) permissionWithPri
 	return r.Set(*value)
 }
 
-func (r permissionQueryNameString) Equals(value string) permissionWithPrismaNameEqualsParam {
+func (r permissionQueryNameString) Equals(value string) permissionWithPrismaNameEqualsUniqueParam {
 
-	return permissionWithPrismaNameEqualsParam{
+	return permissionWithPrismaNameEqualsUniqueParam{
 		data: builder.Field{
 			Name: "name",
 			Fields: []builder.Field{
@@ -12891,9 +15119,9 @@ func (r permissionQueryNameString) Equals(value string) permissionWithPrismaName
 	}
 }
 
-func (r permissionQueryNameString) EqualsIfPresent(value *string) permissionWithPrismaNameEqualsParam {
+func (r permissionQueryNameString) EqualsIfPresent(value *string) permissionWithPrismaNameEqualsUniqueParam {
 	if value == nil {
-		return permissionWithPrismaNameEqualsParam{}
+		return permissionWithPrismaNameEqualsUniqueParam{}
 	}
 	return r.Equals(*value)
 }
@@ -12916,8 +15144,8 @@ func (r permissionQueryNameString) Cursor(cursor string) permissionCursorParam {
 	}
 }
 
-func (r permissionQueryNameString) In(value []string) permissionDefaultParam {
-	return permissionDefaultParam{
+func (r permissionQueryNameString) In(value []string) permissionParamUnique {
+	return permissionParamUnique{
 		data: builder.Field{
 			Name: "name",
 			Fields: []builder.Field{
@@ -12930,15 +15158,15 @@ func (r permissionQueryNameString) In(value []string) permissionDefaultParam {
 	}
 }
 
-func (r permissionQueryNameString) InIfPresent(value []string) permissionDefaultParam {
+func (r permissionQueryNameString) InIfPresent(value []string) permissionParamUnique {
 	if value == nil {
-		return permissionDefaultParam{}
+		return permissionParamUnique{}
 	}
 	return r.In(value)
 }
 
-func (r permissionQueryNameString) NotIn(value []string) permissionDefaultParam {
-	return permissionDefaultParam{
+func (r permissionQueryNameString) NotIn(value []string) permissionParamUnique {
+	return permissionParamUnique{
 		data: builder.Field{
 			Name: "name",
 			Fields: []builder.Field{
@@ -12951,15 +15179,15 @@ func (r permissionQueryNameString) NotIn(value []string) permissionDefaultParam 
 	}
 }
 
-func (r permissionQueryNameString) NotInIfPresent(value []string) permissionDefaultParam {
+func (r permissionQueryNameString) NotInIfPresent(value []string) permissionParamUnique {
 	if value == nil {
-		return permissionDefaultParam{}
+		return permissionParamUnique{}
 	}
 	return r.NotIn(value)
 }
 
-func (r permissionQueryNameString) Lt(value string) permissionDefaultParam {
-	return permissionDefaultParam{
+func (r permissionQueryNameString) Lt(value string) permissionParamUnique {
+	return permissionParamUnique{
 		data: builder.Field{
 			Name: "name",
 			Fields: []builder.Field{
@@ -12972,15 +15200,15 @@ func (r permissionQueryNameString) Lt(value string) permissionDefaultParam {
 	}
 }
 
-func (r permissionQueryNameString) LtIfPresent(value *string) permissionDefaultParam {
+func (r permissionQueryNameString) LtIfPresent(value *string) permissionParamUnique {
 	if value == nil {
-		return permissionDefaultParam{}
+		return permissionParamUnique{}
 	}
 	return r.Lt(*value)
 }
 
-func (r permissionQueryNameString) Lte(value string) permissionDefaultParam {
-	return permissionDefaultParam{
+func (r permissionQueryNameString) Lte(value string) permissionParamUnique {
+	return permissionParamUnique{
 		data: builder.Field{
 			Name: "name",
 			Fields: []builder.Field{
@@ -12993,15 +15221,15 @@ func (r permissionQueryNameString) Lte(value string) permissionDefaultParam {
 	}
 }
 
-func (r permissionQueryNameString) LteIfPresent(value *string) permissionDefaultParam {
+func (r permissionQueryNameString) LteIfPresent(value *string) permissionParamUnique {
 	if value == nil {
-		return permissionDefaultParam{}
+		return permissionParamUnique{}
 	}
 	return r.Lte(*value)
 }
 
-func (r permissionQueryNameString) Gt(value string) permissionDefaultParam {
-	return permissionDefaultParam{
+func (r permissionQueryNameString) Gt(value string) permissionParamUnique {
+	return permissionParamUnique{
 		data: builder.Field{
 			Name: "name",
 			Fields: []builder.Field{
@@ -13014,15 +15242,15 @@ func (r permissionQueryNameString) Gt(value string) permissionDefaultParam {
 	}
 }
 
-func (r permissionQueryNameString) GtIfPresent(value *string) permissionDefaultParam {
+func (r permissionQueryNameString) GtIfPresent(value *string) permissionParamUnique {
 	if value == nil {
-		return permissionDefaultParam{}
+		return permissionParamUnique{}
 	}
 	return r.Gt(*value)
 }
 
-func (r permissionQueryNameString) Gte(value string) permissionDefaultParam {
-	return permissionDefaultParam{
+func (r permissionQueryNameString) Gte(value string) permissionParamUnique {
+	return permissionParamUnique{
 		data: builder.Field{
 			Name: "name",
 			Fields: []builder.Field{
@@ -13035,15 +15263,15 @@ func (r permissionQueryNameString) Gte(value string) permissionDefaultParam {
 	}
 }
 
-func (r permissionQueryNameString) GteIfPresent(value *string) permissionDefaultParam {
+func (r permissionQueryNameString) GteIfPresent(value *string) permissionParamUnique {
 	if value == nil {
-		return permissionDefaultParam{}
+		return permissionParamUnique{}
 	}
 	return r.Gte(*value)
 }
 
-func (r permissionQueryNameString) Contains(value string) permissionDefaultParam {
-	return permissionDefaultParam{
+func (r permissionQueryNameString) Contains(value string) permissionParamUnique {
+	return permissionParamUnique{
 		data: builder.Field{
 			Name: "name",
 			Fields: []builder.Field{
@@ -13056,15 +15284,15 @@ func (r permissionQueryNameString) Contains(value string) permissionDefaultParam
 	}
 }
 
-func (r permissionQueryNameString) ContainsIfPresent(value *string) permissionDefaultParam {
+func (r permissionQueryNameString) ContainsIfPresent(value *string) permissionParamUnique {
 	if value == nil {
-		return permissionDefaultParam{}
+		return permissionParamUnique{}
 	}
 	return r.Contains(*value)
 }
 
-func (r permissionQueryNameString) StartsWith(value string) permissionDefaultParam {
-	return permissionDefaultParam{
+func (r permissionQueryNameString) StartsWith(value string) permissionParamUnique {
+	return permissionParamUnique{
 		data: builder.Field{
 			Name: "name",
 			Fields: []builder.Field{
@@ -13077,15 +15305,15 @@ func (r permissionQueryNameString) StartsWith(value string) permissionDefaultPar
 	}
 }
 
-func (r permissionQueryNameString) StartsWithIfPresent(value *string) permissionDefaultParam {
+func (r permissionQueryNameString) StartsWithIfPresent(value *string) permissionParamUnique {
 	if value == nil {
-		return permissionDefaultParam{}
+		return permissionParamUnique{}
 	}
 	return r.StartsWith(*value)
 }
 
-func (r permissionQueryNameString) EndsWith(value string) permissionDefaultParam {
-	return permissionDefaultParam{
+func (r permissionQueryNameString) EndsWith(value string) permissionParamUnique {
+	return permissionParamUnique{
 		data: builder.Field{
 			Name: "name",
 			Fields: []builder.Field{
@@ -13098,15 +15326,15 @@ func (r permissionQueryNameString) EndsWith(value string) permissionDefaultParam
 	}
 }
 
-func (r permissionQueryNameString) EndsWithIfPresent(value *string) permissionDefaultParam {
+func (r permissionQueryNameString) EndsWithIfPresent(value *string) permissionParamUnique {
 	if value == nil {
-		return permissionDefaultParam{}
+		return permissionParamUnique{}
 	}
 	return r.EndsWith(*value)
 }
 
-func (r permissionQueryNameString) Mode(value QueryMode) permissionDefaultParam {
-	return permissionDefaultParam{
+func (r permissionQueryNameString) Mode(value QueryMode) permissionParamUnique {
+	return permissionParamUnique{
 		data: builder.Field{
 			Name: "name",
 			Fields: []builder.Field{
@@ -13119,15 +15347,15 @@ func (r permissionQueryNameString) Mode(value QueryMode) permissionDefaultParam 
 	}
 }
 
-func (r permissionQueryNameString) ModeIfPresent(value *QueryMode) permissionDefaultParam {
+func (r permissionQueryNameString) ModeIfPresent(value *QueryMode) permissionParamUnique {
 	if value == nil {
-		return permissionDefaultParam{}
+		return permissionParamUnique{}
 	}
 	return r.Mode(*value)
 }
 
-func (r permissionQueryNameString) Not(value string) permissionDefaultParam {
-	return permissionDefaultParam{
+func (r permissionQueryNameString) Not(value string) permissionParamUnique {
+	return permissionParamUnique{
 		data: builder.Field{
 			Name: "name",
 			Fields: []builder.Field{
@@ -13140,17 +15368,17 @@ func (r permissionQueryNameString) Not(value string) permissionDefaultParam {
 	}
 }
 
-func (r permissionQueryNameString) NotIfPresent(value *string) permissionDefaultParam {
+func (r permissionQueryNameString) NotIfPresent(value *string) permissionParamUnique {
 	if value == nil {
-		return permissionDefaultParam{}
+		return permissionParamUnique{}
 	}
 	return r.Not(*value)
 }
 
 // deprecated: Use StartsWith instead.
 
-func (r permissionQueryNameString) HasPrefix(value string) permissionDefaultParam {
-	return permissionDefaultParam{
+func (r permissionQueryNameString) HasPrefix(value string) permissionParamUnique {
+	return permissionParamUnique{
 		data: builder.Field{
 			Name: "name",
 			Fields: []builder.Field{
@@ -13164,17 +15392,17 @@ func (r permissionQueryNameString) HasPrefix(value string) permissionDefaultPara
 }
 
 // deprecated: Use StartsWithIfPresent instead.
-func (r permissionQueryNameString) HasPrefixIfPresent(value *string) permissionDefaultParam {
+func (r permissionQueryNameString) HasPrefixIfPresent(value *string) permissionParamUnique {
 	if value == nil {
-		return permissionDefaultParam{}
+		return permissionParamUnique{}
 	}
 	return r.HasPrefix(*value)
 }
 
 // deprecated: Use EndsWith instead.
 
-func (r permissionQueryNameString) HasSuffix(value string) permissionDefaultParam {
-	return permissionDefaultParam{
+func (r permissionQueryNameString) HasSuffix(value string) permissionParamUnique {
+	return permissionParamUnique{
 		data: builder.Field{
 			Name: "name",
 			Fields: []builder.Field{
@@ -13188,9 +15416,9 @@ func (r permissionQueryNameString) HasSuffix(value string) permissionDefaultPara
 }
 
 // deprecated: Use EndsWithIfPresent instead.
-func (r permissionQueryNameString) HasSuffixIfPresent(value *string) permissionDefaultParam {
+func (r permissionQueryNameString) HasSuffixIfPresent(value *string) permissionParamUnique {
 	if value == nil {
-		return permissionDefaultParam{}
+		return permissionParamUnique{}
 	}
 	return r.HasSuffix(*value)
 }
@@ -13454,6 +15682,24 @@ func (rolePermissionQuery) And(params ...RolePermissionWhereParam) rolePermissio
 			List:     true,
 			WrapList: true,
 			Fields:   fields,
+		},
+	}
+}
+
+func (rolePermissionQuery) RoleIDPermissionID(
+	_roleID RolePermissionWithPrismaRoleIDWhereParam,
+
+	_permissionID RolePermissionWithPrismaPermissionIDWhereParam,
+) RolePermissionEqualsUniqueWhereParam {
+	var fields []builder.Field
+
+	fields = append(fields, _roleID.field())
+	fields = append(fields, _permissionID.field())
+
+	return rolePermissionEqualsUniqueParam{
+		data: builder.Field{
+			Name:   "role_id_permission_id",
+			Fields: builder.TransformEquals(fields),
 		},
 	}
 }
@@ -17223,6 +19469,13656 @@ func (r userRoleQueryRoleIDString) Field() userRolePrismaFields {
 	return userRoleFieldRoleID
 }
 
+// Component acts as a namespaces to access query methods for the Component model
+var Component = componentQuery{}
+
+// componentQuery exposes query functions for the component model
+type componentQuery struct {
+
+	// ID
+	//
+	// @required
+	ID componentQueryIDString
+
+	Organization componentQueryOrganizationRelations
+
+	// OrganizationID
+	//
+	// @required
+	OrganizationID componentQueryOrganizationIDString
+
+	// Created
+	//
+	// @required
+	Created componentQueryCreatedDateTime
+
+	// Updated
+	//
+	// @required
+	Updated componentQueryUpdatedDateTime
+
+	// Name
+	//
+	// @required
+	Name componentQueryNameString
+
+	// Type
+	//
+	// @required
+	Type componentQueryTypeString
+
+	// Provider
+	//
+	// @required
+	Provider componentQueryProviderString
+
+	Tags componentQueryTagsRelations
+}
+
+func (componentQuery) Not(params ...ComponentWhereParam) componentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return componentDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (componentQuery) Or(params ...ComponentWhereParam) componentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return componentDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (componentQuery) And(params ...ComponentWhereParam) componentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return componentDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+// base struct
+type componentQueryIDString struct{}
+
+// Set the required value of ID
+func (r componentQueryIDString) Set(value string) componentSetParam {
+
+	return componentSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r componentQueryIDString) SetIfPresent(value *String) componentSetParam {
+	if value == nil {
+		return componentSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r componentQueryIDString) Equals(value string) componentWithPrismaIDEqualsUniqueParam {
+
+	return componentWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryIDString) EqualsIfPresent(value *string) componentWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return componentWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r componentQueryIDString) Order(direction SortOrder) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r componentQueryIDString) Cursor(cursor string) componentCursorParam {
+	return componentCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r componentQueryIDString) In(value []string) componentParamUnique {
+	return componentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryIDString) InIfPresent(value []string) componentParamUnique {
+	if value == nil {
+		return componentParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r componentQueryIDString) NotIn(value []string) componentParamUnique {
+	return componentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryIDString) NotInIfPresent(value []string) componentParamUnique {
+	if value == nil {
+		return componentParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r componentQueryIDString) Lt(value string) componentParamUnique {
+	return componentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryIDString) LtIfPresent(value *string) componentParamUnique {
+	if value == nil {
+		return componentParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r componentQueryIDString) Lte(value string) componentParamUnique {
+	return componentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryIDString) LteIfPresent(value *string) componentParamUnique {
+	if value == nil {
+		return componentParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r componentQueryIDString) Gt(value string) componentParamUnique {
+	return componentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryIDString) GtIfPresent(value *string) componentParamUnique {
+	if value == nil {
+		return componentParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r componentQueryIDString) Gte(value string) componentParamUnique {
+	return componentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryIDString) GteIfPresent(value *string) componentParamUnique {
+	if value == nil {
+		return componentParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r componentQueryIDString) Contains(value string) componentParamUnique {
+	return componentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryIDString) ContainsIfPresent(value *string) componentParamUnique {
+	if value == nil {
+		return componentParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r componentQueryIDString) StartsWith(value string) componentParamUnique {
+	return componentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryIDString) StartsWithIfPresent(value *string) componentParamUnique {
+	if value == nil {
+		return componentParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r componentQueryIDString) EndsWith(value string) componentParamUnique {
+	return componentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryIDString) EndsWithIfPresent(value *string) componentParamUnique {
+	if value == nil {
+		return componentParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r componentQueryIDString) Mode(value QueryMode) componentParamUnique {
+	return componentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryIDString) ModeIfPresent(value *QueryMode) componentParamUnique {
+	if value == nil {
+		return componentParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r componentQueryIDString) Not(value string) componentParamUnique {
+	return componentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryIDString) NotIfPresent(value *string) componentParamUnique {
+	if value == nil {
+		return componentParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r componentQueryIDString) HasPrefix(value string) componentParamUnique {
+	return componentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r componentQueryIDString) HasPrefixIfPresent(value *string) componentParamUnique {
+	if value == nil {
+		return componentParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r componentQueryIDString) HasSuffix(value string) componentParamUnique {
+	return componentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r componentQueryIDString) HasSuffixIfPresent(value *string) componentParamUnique {
+	if value == nil {
+		return componentParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r componentQueryIDString) Field() componentPrismaFields {
+	return componentFieldID
+}
+
+// base struct
+type componentQueryOrganizationOrganization struct{}
+
+type componentQueryOrganizationRelations struct{}
+
+// Component -> Organization
+//
+// @relation
+// @required
+func (componentQueryOrganizationRelations) Where(
+	params ...OrganizationWhereParam,
+) componentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (componentQueryOrganizationRelations) Fetch() componentToOrganizationFindUnique {
+	var v componentToOrganizationFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "organization"
+	v.query.Outputs = organizationOutput
+
+	return v
+}
+
+func (r componentQueryOrganizationRelations) Link(
+	params OrganizationWhereParam,
+) componentWithPrismaOrganizationSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return componentWithPrismaOrganizationSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return componentWithPrismaOrganizationSetParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryOrganizationRelations) Unlink() componentWithPrismaOrganizationSetParam {
+	var v componentWithPrismaOrganizationSetParam
+
+	v = componentWithPrismaOrganizationSetParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r componentQueryOrganizationOrganization) Field() componentPrismaFields {
+	return componentFieldOrganization
+}
+
+// base struct
+type componentQueryOrganizationIDString struct{}
+
+// Set the required value of OrganizationID
+func (r componentQueryOrganizationIDString) Set(value string) componentSetParam {
+
+	return componentSetParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of OrganizationID dynamically
+func (r componentQueryOrganizationIDString) SetIfPresent(value *String) componentSetParam {
+	if value == nil {
+		return componentSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r componentQueryOrganizationIDString) Equals(value string) componentWithPrismaOrganizationIDEqualsParam {
+
+	return componentWithPrismaOrganizationIDEqualsParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryOrganizationIDString) EqualsIfPresent(value *string) componentWithPrismaOrganizationIDEqualsParam {
+	if value == nil {
+		return componentWithPrismaOrganizationIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r componentQueryOrganizationIDString) Order(direction SortOrder) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: direction,
+		},
+	}
+}
+
+func (r componentQueryOrganizationIDString) Cursor(cursor string) componentCursorParam {
+	return componentCursorParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r componentQueryOrganizationIDString) In(value []string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryOrganizationIDString) InIfPresent(value []string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r componentQueryOrganizationIDString) NotIn(value []string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryOrganizationIDString) NotInIfPresent(value []string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r componentQueryOrganizationIDString) Lt(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryOrganizationIDString) LtIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r componentQueryOrganizationIDString) Lte(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryOrganizationIDString) LteIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r componentQueryOrganizationIDString) Gt(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryOrganizationIDString) GtIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r componentQueryOrganizationIDString) Gte(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryOrganizationIDString) GteIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r componentQueryOrganizationIDString) Contains(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryOrganizationIDString) ContainsIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r componentQueryOrganizationIDString) StartsWith(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryOrganizationIDString) StartsWithIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r componentQueryOrganizationIDString) EndsWith(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryOrganizationIDString) EndsWithIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r componentQueryOrganizationIDString) Mode(value QueryMode) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryOrganizationIDString) ModeIfPresent(value *QueryMode) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r componentQueryOrganizationIDString) Not(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryOrganizationIDString) NotIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r componentQueryOrganizationIDString) HasPrefix(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r componentQueryOrganizationIDString) HasPrefixIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r componentQueryOrganizationIDString) HasSuffix(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r componentQueryOrganizationIDString) HasSuffixIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r componentQueryOrganizationIDString) Field() componentPrismaFields {
+	return componentFieldOrganizationID
+}
+
+// base struct
+type componentQueryCreatedDateTime struct{}
+
+// Set the required value of Created
+func (r componentQueryCreatedDateTime) Set(value DateTime) componentSetParam {
+
+	return componentSetParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Created dynamically
+func (r componentQueryCreatedDateTime) SetIfPresent(value *DateTime) componentSetParam {
+	if value == nil {
+		return componentSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r componentQueryCreatedDateTime) Equals(value DateTime) componentWithPrismaCreatedEqualsParam {
+
+	return componentWithPrismaCreatedEqualsParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryCreatedDateTime) EqualsIfPresent(value *DateTime) componentWithPrismaCreatedEqualsParam {
+	if value == nil {
+		return componentWithPrismaCreatedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r componentQueryCreatedDateTime) Order(direction SortOrder) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: direction,
+		},
+	}
+}
+
+func (r componentQueryCreatedDateTime) Cursor(cursor DateTime) componentCursorParam {
+	return componentCursorParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: cursor,
+		},
+	}
+}
+
+func (r componentQueryCreatedDateTime) In(value []DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryCreatedDateTime) InIfPresent(value []DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r componentQueryCreatedDateTime) NotIn(value []DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryCreatedDateTime) NotInIfPresent(value []DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r componentQueryCreatedDateTime) Lt(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryCreatedDateTime) LtIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r componentQueryCreatedDateTime) Lte(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryCreatedDateTime) LteIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r componentQueryCreatedDateTime) Gt(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryCreatedDateTime) GtIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r componentQueryCreatedDateTime) Gte(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryCreatedDateTime) GteIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r componentQueryCreatedDateTime) Not(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryCreatedDateTime) NotIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r componentQueryCreatedDateTime) Before(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r componentQueryCreatedDateTime) BeforeIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r componentQueryCreatedDateTime) After(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r componentQueryCreatedDateTime) AfterIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r componentQueryCreatedDateTime) BeforeEquals(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r componentQueryCreatedDateTime) BeforeEqualsIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r componentQueryCreatedDateTime) AfterEquals(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r componentQueryCreatedDateTime) AfterEqualsIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r componentQueryCreatedDateTime) Field() componentPrismaFields {
+	return componentFieldCreated
+}
+
+// base struct
+type componentQueryUpdatedDateTime struct{}
+
+// Set the required value of Updated
+func (r componentQueryUpdatedDateTime) Set(value DateTime) componentSetParam {
+
+	return componentSetParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Updated dynamically
+func (r componentQueryUpdatedDateTime) SetIfPresent(value *DateTime) componentSetParam {
+	if value == nil {
+		return componentSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r componentQueryUpdatedDateTime) Equals(value DateTime) componentWithPrismaUpdatedEqualsParam {
+
+	return componentWithPrismaUpdatedEqualsParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryUpdatedDateTime) EqualsIfPresent(value *DateTime) componentWithPrismaUpdatedEqualsParam {
+	if value == nil {
+		return componentWithPrismaUpdatedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r componentQueryUpdatedDateTime) Order(direction SortOrder) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: direction,
+		},
+	}
+}
+
+func (r componentQueryUpdatedDateTime) Cursor(cursor DateTime) componentCursorParam {
+	return componentCursorParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: cursor,
+		},
+	}
+}
+
+func (r componentQueryUpdatedDateTime) In(value []DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryUpdatedDateTime) InIfPresent(value []DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r componentQueryUpdatedDateTime) NotIn(value []DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryUpdatedDateTime) NotInIfPresent(value []DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r componentQueryUpdatedDateTime) Lt(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryUpdatedDateTime) LtIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r componentQueryUpdatedDateTime) Lte(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryUpdatedDateTime) LteIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r componentQueryUpdatedDateTime) Gt(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryUpdatedDateTime) GtIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r componentQueryUpdatedDateTime) Gte(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryUpdatedDateTime) GteIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r componentQueryUpdatedDateTime) Not(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryUpdatedDateTime) NotIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r componentQueryUpdatedDateTime) Before(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r componentQueryUpdatedDateTime) BeforeIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r componentQueryUpdatedDateTime) After(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r componentQueryUpdatedDateTime) AfterIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r componentQueryUpdatedDateTime) BeforeEquals(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r componentQueryUpdatedDateTime) BeforeEqualsIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r componentQueryUpdatedDateTime) AfterEquals(value DateTime) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r componentQueryUpdatedDateTime) AfterEqualsIfPresent(value *DateTime) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r componentQueryUpdatedDateTime) Field() componentPrismaFields {
+	return componentFieldUpdated
+}
+
+// base struct
+type componentQueryNameString struct{}
+
+// Set the required value of Name
+func (r componentQueryNameString) Set(value string) componentWithPrismaNameSetParam {
+
+	return componentWithPrismaNameSetParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Name dynamically
+func (r componentQueryNameString) SetIfPresent(value *String) componentWithPrismaNameSetParam {
+	if value == nil {
+		return componentWithPrismaNameSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r componentQueryNameString) Equals(value string) componentWithPrismaNameEqualsParam {
+
+	return componentWithPrismaNameEqualsParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryNameString) EqualsIfPresent(value *string) componentWithPrismaNameEqualsParam {
+	if value == nil {
+		return componentWithPrismaNameEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r componentQueryNameString) Order(direction SortOrder) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: direction,
+		},
+	}
+}
+
+func (r componentQueryNameString) Cursor(cursor string) componentCursorParam {
+	return componentCursorParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: cursor,
+		},
+	}
+}
+
+func (r componentQueryNameString) In(value []string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryNameString) InIfPresent(value []string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r componentQueryNameString) NotIn(value []string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryNameString) NotInIfPresent(value []string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r componentQueryNameString) Lt(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryNameString) LtIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r componentQueryNameString) Lte(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryNameString) LteIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r componentQueryNameString) Gt(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryNameString) GtIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r componentQueryNameString) Gte(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryNameString) GteIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r componentQueryNameString) Contains(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryNameString) ContainsIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r componentQueryNameString) StartsWith(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryNameString) StartsWithIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r componentQueryNameString) EndsWith(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryNameString) EndsWithIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r componentQueryNameString) Mode(value QueryMode) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryNameString) ModeIfPresent(value *QueryMode) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r componentQueryNameString) Not(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryNameString) NotIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r componentQueryNameString) HasPrefix(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r componentQueryNameString) HasPrefixIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r componentQueryNameString) HasSuffix(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r componentQueryNameString) HasSuffixIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r componentQueryNameString) Field() componentPrismaFields {
+	return componentFieldName
+}
+
+// base struct
+type componentQueryTypeString struct{}
+
+// Set the required value of Type
+func (r componentQueryTypeString) Set(value string) componentWithPrismaTypeSetParam {
+
+	return componentWithPrismaTypeSetParam{
+		data: builder.Field{
+			Name:  "type",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Type dynamically
+func (r componentQueryTypeString) SetIfPresent(value *String) componentWithPrismaTypeSetParam {
+	if value == nil {
+		return componentWithPrismaTypeSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r componentQueryTypeString) Equals(value string) componentWithPrismaTypeEqualsParam {
+
+	return componentWithPrismaTypeEqualsParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryTypeString) EqualsIfPresent(value *string) componentWithPrismaTypeEqualsParam {
+	if value == nil {
+		return componentWithPrismaTypeEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r componentQueryTypeString) Order(direction SortOrder) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name:  "type",
+			Value: direction,
+		},
+	}
+}
+
+func (r componentQueryTypeString) Cursor(cursor string) componentCursorParam {
+	return componentCursorParam{
+		data: builder.Field{
+			Name:  "type",
+			Value: cursor,
+		},
+	}
+}
+
+func (r componentQueryTypeString) In(value []string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryTypeString) InIfPresent(value []string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r componentQueryTypeString) NotIn(value []string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryTypeString) NotInIfPresent(value []string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r componentQueryTypeString) Lt(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryTypeString) LtIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r componentQueryTypeString) Lte(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryTypeString) LteIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r componentQueryTypeString) Gt(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryTypeString) GtIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r componentQueryTypeString) Gte(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryTypeString) GteIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r componentQueryTypeString) Contains(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryTypeString) ContainsIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r componentQueryTypeString) StartsWith(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryTypeString) StartsWithIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r componentQueryTypeString) EndsWith(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryTypeString) EndsWithIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r componentQueryTypeString) Mode(value QueryMode) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryTypeString) ModeIfPresent(value *QueryMode) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r componentQueryTypeString) Not(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryTypeString) NotIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r componentQueryTypeString) HasPrefix(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r componentQueryTypeString) HasPrefixIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r componentQueryTypeString) HasSuffix(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r componentQueryTypeString) HasSuffixIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r componentQueryTypeString) Field() componentPrismaFields {
+	return componentFieldType
+}
+
+// base struct
+type componentQueryProviderString struct{}
+
+// Set the required value of Provider
+func (r componentQueryProviderString) Set(value string) componentWithPrismaProviderSetParam {
+
+	return componentWithPrismaProviderSetParam{
+		data: builder.Field{
+			Name:  "provider",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Provider dynamically
+func (r componentQueryProviderString) SetIfPresent(value *String) componentWithPrismaProviderSetParam {
+	if value == nil {
+		return componentWithPrismaProviderSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r componentQueryProviderString) Equals(value string) componentWithPrismaProviderEqualsParam {
+
+	return componentWithPrismaProviderEqualsParam{
+		data: builder.Field{
+			Name: "provider",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryProviderString) EqualsIfPresent(value *string) componentWithPrismaProviderEqualsParam {
+	if value == nil {
+		return componentWithPrismaProviderEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r componentQueryProviderString) Order(direction SortOrder) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name:  "provider",
+			Value: direction,
+		},
+	}
+}
+
+func (r componentQueryProviderString) Cursor(cursor string) componentCursorParam {
+	return componentCursorParam{
+		data: builder.Field{
+			Name:  "provider",
+			Value: cursor,
+		},
+	}
+}
+
+func (r componentQueryProviderString) In(value []string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "provider",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryProviderString) InIfPresent(value []string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r componentQueryProviderString) NotIn(value []string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "provider",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryProviderString) NotInIfPresent(value []string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r componentQueryProviderString) Lt(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "provider",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryProviderString) LtIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r componentQueryProviderString) Lte(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "provider",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryProviderString) LteIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r componentQueryProviderString) Gt(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "provider",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryProviderString) GtIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r componentQueryProviderString) Gte(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "provider",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryProviderString) GteIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r componentQueryProviderString) Contains(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "provider",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryProviderString) ContainsIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r componentQueryProviderString) StartsWith(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "provider",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryProviderString) StartsWithIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r componentQueryProviderString) EndsWith(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "provider",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryProviderString) EndsWithIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r componentQueryProviderString) Mode(value QueryMode) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "provider",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryProviderString) ModeIfPresent(value *QueryMode) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r componentQueryProviderString) Not(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "provider",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryProviderString) NotIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r componentQueryProviderString) HasPrefix(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "provider",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r componentQueryProviderString) HasPrefixIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r componentQueryProviderString) HasSuffix(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "provider",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r componentQueryProviderString) HasSuffixIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r componentQueryProviderString) Field() componentPrismaFields {
+	return componentFieldProvider
+}
+
+// base struct
+type componentQueryTagsComponentTag struct{}
+
+type componentQueryTagsRelations struct{}
+
+// Component -> Tags
+//
+// @relation
+// @required
+func (componentQueryTagsRelations) Some(
+	params ...ComponentTagWhereParam,
+) componentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "tags",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Component -> Tags
+//
+// @relation
+// @required
+func (componentQueryTagsRelations) Every(
+	params ...ComponentTagWhereParam,
+) componentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "tags",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Component -> Tags
+//
+// @relation
+// @required
+func (componentQueryTagsRelations) None(
+	params ...ComponentTagWhereParam,
+) componentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "tags",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (componentQueryTagsRelations) Fetch(
+
+	params ...ComponentTagWhereParam,
+
+) componentToTagsFindMany {
+	var v componentToTagsFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "tags"
+	v.query.Outputs = componentTagOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r componentQueryTagsRelations) Link(
+	params ...ComponentTagWhereParam,
+) componentSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return componentSetParam{
+		data: builder.Field{
+			Name: "tags",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryTagsRelations) Unlink(
+	params ...ComponentTagWhereParam,
+) componentSetParam {
+	var v componentSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = componentSetParam{
+		data: builder.Field{
+			Name: "tags",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r componentQueryTagsComponentTag) Field() componentPrismaFields {
+	return componentFieldTags
+}
+
+// ComponentTag acts as a namespaces to access query methods for the ComponentTag model
+var ComponentTag = componentTagQuery{}
+
+// componentTagQuery exposes query functions for the componentTag model
+type componentTagQuery struct {
+
+	// ID
+	//
+	// @required
+	ID componentTagQueryIDString
+
+	// Created
+	//
+	// @required
+	Created componentTagQueryCreatedDateTime
+
+	// Updated
+	//
+	// @required
+	Updated componentTagQueryUpdatedDateTime
+
+	Component componentTagQueryComponentRelations
+
+	// ComponentID
+	//
+	// @required
+	ComponentID componentTagQueryComponentIDString
+
+	Tag componentTagQueryTagRelations
+
+	// TagID
+	//
+	// @required
+	TagID componentTagQueryTagIDString
+}
+
+func (componentTagQuery) Not(params ...ComponentTagWhereParam) componentTagDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (componentTagQuery) Or(params ...ComponentTagWhereParam) componentTagDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (componentTagQuery) And(params ...ComponentTagWhereParam) componentTagDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+// base struct
+type componentTagQueryIDString struct{}
+
+// Set the required value of ID
+func (r componentTagQueryIDString) Set(value string) componentTagSetParam {
+
+	return componentTagSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r componentTagQueryIDString) SetIfPresent(value *String) componentTagSetParam {
+	if value == nil {
+		return componentTagSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r componentTagQueryIDString) Equals(value string) componentTagWithPrismaIDEqualsUniqueParam {
+
+	return componentTagWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryIDString) EqualsIfPresent(value *string) componentTagWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return componentTagWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r componentTagQueryIDString) Order(direction SortOrder) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r componentTagQueryIDString) Cursor(cursor string) componentTagCursorParam {
+	return componentTagCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r componentTagQueryIDString) In(value []string) componentTagParamUnique {
+	return componentTagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryIDString) InIfPresent(value []string) componentTagParamUnique {
+	if value == nil {
+		return componentTagParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r componentTagQueryIDString) NotIn(value []string) componentTagParamUnique {
+	return componentTagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryIDString) NotInIfPresent(value []string) componentTagParamUnique {
+	if value == nil {
+		return componentTagParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r componentTagQueryIDString) Lt(value string) componentTagParamUnique {
+	return componentTagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryIDString) LtIfPresent(value *string) componentTagParamUnique {
+	if value == nil {
+		return componentTagParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r componentTagQueryIDString) Lte(value string) componentTagParamUnique {
+	return componentTagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryIDString) LteIfPresent(value *string) componentTagParamUnique {
+	if value == nil {
+		return componentTagParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r componentTagQueryIDString) Gt(value string) componentTagParamUnique {
+	return componentTagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryIDString) GtIfPresent(value *string) componentTagParamUnique {
+	if value == nil {
+		return componentTagParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r componentTagQueryIDString) Gte(value string) componentTagParamUnique {
+	return componentTagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryIDString) GteIfPresent(value *string) componentTagParamUnique {
+	if value == nil {
+		return componentTagParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r componentTagQueryIDString) Contains(value string) componentTagParamUnique {
+	return componentTagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryIDString) ContainsIfPresent(value *string) componentTagParamUnique {
+	if value == nil {
+		return componentTagParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r componentTagQueryIDString) StartsWith(value string) componentTagParamUnique {
+	return componentTagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryIDString) StartsWithIfPresent(value *string) componentTagParamUnique {
+	if value == nil {
+		return componentTagParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r componentTagQueryIDString) EndsWith(value string) componentTagParamUnique {
+	return componentTagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryIDString) EndsWithIfPresent(value *string) componentTagParamUnique {
+	if value == nil {
+		return componentTagParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r componentTagQueryIDString) Mode(value QueryMode) componentTagParamUnique {
+	return componentTagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryIDString) ModeIfPresent(value *QueryMode) componentTagParamUnique {
+	if value == nil {
+		return componentTagParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r componentTagQueryIDString) Not(value string) componentTagParamUnique {
+	return componentTagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryIDString) NotIfPresent(value *string) componentTagParamUnique {
+	if value == nil {
+		return componentTagParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r componentTagQueryIDString) HasPrefix(value string) componentTagParamUnique {
+	return componentTagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r componentTagQueryIDString) HasPrefixIfPresent(value *string) componentTagParamUnique {
+	if value == nil {
+		return componentTagParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r componentTagQueryIDString) HasSuffix(value string) componentTagParamUnique {
+	return componentTagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r componentTagQueryIDString) HasSuffixIfPresent(value *string) componentTagParamUnique {
+	if value == nil {
+		return componentTagParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r componentTagQueryIDString) Field() componentTagPrismaFields {
+	return componentTagFieldID
+}
+
+// base struct
+type componentTagQueryCreatedDateTime struct{}
+
+// Set the required value of Created
+func (r componentTagQueryCreatedDateTime) Set(value DateTime) componentTagSetParam {
+
+	return componentTagSetParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Created dynamically
+func (r componentTagQueryCreatedDateTime) SetIfPresent(value *DateTime) componentTagSetParam {
+	if value == nil {
+		return componentTagSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r componentTagQueryCreatedDateTime) Equals(value DateTime) componentTagWithPrismaCreatedEqualsParam {
+
+	return componentTagWithPrismaCreatedEqualsParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryCreatedDateTime) EqualsIfPresent(value *DateTime) componentTagWithPrismaCreatedEqualsParam {
+	if value == nil {
+		return componentTagWithPrismaCreatedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r componentTagQueryCreatedDateTime) Order(direction SortOrder) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: direction,
+		},
+	}
+}
+
+func (r componentTagQueryCreatedDateTime) Cursor(cursor DateTime) componentTagCursorParam {
+	return componentTagCursorParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: cursor,
+		},
+	}
+}
+
+func (r componentTagQueryCreatedDateTime) In(value []DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryCreatedDateTime) InIfPresent(value []DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r componentTagQueryCreatedDateTime) NotIn(value []DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryCreatedDateTime) NotInIfPresent(value []DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r componentTagQueryCreatedDateTime) Lt(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryCreatedDateTime) LtIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r componentTagQueryCreatedDateTime) Lte(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryCreatedDateTime) LteIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r componentTagQueryCreatedDateTime) Gt(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryCreatedDateTime) GtIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r componentTagQueryCreatedDateTime) Gte(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryCreatedDateTime) GteIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r componentTagQueryCreatedDateTime) Not(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryCreatedDateTime) NotIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r componentTagQueryCreatedDateTime) Before(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r componentTagQueryCreatedDateTime) BeforeIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r componentTagQueryCreatedDateTime) After(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r componentTagQueryCreatedDateTime) AfterIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r componentTagQueryCreatedDateTime) BeforeEquals(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r componentTagQueryCreatedDateTime) BeforeEqualsIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r componentTagQueryCreatedDateTime) AfterEquals(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r componentTagQueryCreatedDateTime) AfterEqualsIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r componentTagQueryCreatedDateTime) Field() componentTagPrismaFields {
+	return componentTagFieldCreated
+}
+
+// base struct
+type componentTagQueryUpdatedDateTime struct{}
+
+// Set the required value of Updated
+func (r componentTagQueryUpdatedDateTime) Set(value DateTime) componentTagSetParam {
+
+	return componentTagSetParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Updated dynamically
+func (r componentTagQueryUpdatedDateTime) SetIfPresent(value *DateTime) componentTagSetParam {
+	if value == nil {
+		return componentTagSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r componentTagQueryUpdatedDateTime) Equals(value DateTime) componentTagWithPrismaUpdatedEqualsParam {
+
+	return componentTagWithPrismaUpdatedEqualsParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryUpdatedDateTime) EqualsIfPresent(value *DateTime) componentTagWithPrismaUpdatedEqualsParam {
+	if value == nil {
+		return componentTagWithPrismaUpdatedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r componentTagQueryUpdatedDateTime) Order(direction SortOrder) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: direction,
+		},
+	}
+}
+
+func (r componentTagQueryUpdatedDateTime) Cursor(cursor DateTime) componentTagCursorParam {
+	return componentTagCursorParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: cursor,
+		},
+	}
+}
+
+func (r componentTagQueryUpdatedDateTime) In(value []DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryUpdatedDateTime) InIfPresent(value []DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r componentTagQueryUpdatedDateTime) NotIn(value []DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryUpdatedDateTime) NotInIfPresent(value []DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r componentTagQueryUpdatedDateTime) Lt(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryUpdatedDateTime) LtIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r componentTagQueryUpdatedDateTime) Lte(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryUpdatedDateTime) LteIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r componentTagQueryUpdatedDateTime) Gt(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryUpdatedDateTime) GtIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r componentTagQueryUpdatedDateTime) Gte(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryUpdatedDateTime) GteIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r componentTagQueryUpdatedDateTime) Not(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryUpdatedDateTime) NotIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r componentTagQueryUpdatedDateTime) Before(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r componentTagQueryUpdatedDateTime) BeforeIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r componentTagQueryUpdatedDateTime) After(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r componentTagQueryUpdatedDateTime) AfterIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r componentTagQueryUpdatedDateTime) BeforeEquals(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r componentTagQueryUpdatedDateTime) BeforeEqualsIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r componentTagQueryUpdatedDateTime) AfterEquals(value DateTime) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r componentTagQueryUpdatedDateTime) AfterEqualsIfPresent(value *DateTime) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r componentTagQueryUpdatedDateTime) Field() componentTagPrismaFields {
+	return componentTagFieldUpdated
+}
+
+// base struct
+type componentTagQueryComponentComponent struct{}
+
+type componentTagQueryComponentRelations struct{}
+
+// ComponentTag -> Component
+//
+// @relation
+// @required
+func (componentTagQueryComponentRelations) Where(
+	params ...ComponentWhereParam,
+) componentTagDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "component",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (componentTagQueryComponentRelations) Fetch() componentTagToComponentFindUnique {
+	var v componentTagToComponentFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "component"
+	v.query.Outputs = componentOutput
+
+	return v
+}
+
+func (r componentTagQueryComponentRelations) Link(
+	params ComponentWhereParam,
+) componentTagWithPrismaComponentSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return componentTagWithPrismaComponentSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return componentTagWithPrismaComponentSetParam{
+		data: builder.Field{
+			Name: "component",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryComponentRelations) Unlink() componentTagWithPrismaComponentSetParam {
+	var v componentTagWithPrismaComponentSetParam
+
+	v = componentTagWithPrismaComponentSetParam{
+		data: builder.Field{
+			Name: "component",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r componentTagQueryComponentComponent) Field() componentTagPrismaFields {
+	return componentTagFieldComponent
+}
+
+// base struct
+type componentTagQueryComponentIDString struct{}
+
+// Set the required value of ComponentID
+func (r componentTagQueryComponentIDString) Set(value string) componentTagSetParam {
+
+	return componentTagSetParam{
+		data: builder.Field{
+			Name:  "component_id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ComponentID dynamically
+func (r componentTagQueryComponentIDString) SetIfPresent(value *String) componentTagSetParam {
+	if value == nil {
+		return componentTagSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r componentTagQueryComponentIDString) Equals(value string) componentTagWithPrismaComponentIDEqualsParam {
+
+	return componentTagWithPrismaComponentIDEqualsParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryComponentIDString) EqualsIfPresent(value *string) componentTagWithPrismaComponentIDEqualsParam {
+	if value == nil {
+		return componentTagWithPrismaComponentIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r componentTagQueryComponentIDString) Order(direction SortOrder) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name:  "component_id",
+			Value: direction,
+		},
+	}
+}
+
+func (r componentTagQueryComponentIDString) Cursor(cursor string) componentTagCursorParam {
+	return componentTagCursorParam{
+		data: builder.Field{
+			Name:  "component_id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r componentTagQueryComponentIDString) In(value []string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryComponentIDString) InIfPresent(value []string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r componentTagQueryComponentIDString) NotIn(value []string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryComponentIDString) NotInIfPresent(value []string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r componentTagQueryComponentIDString) Lt(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryComponentIDString) LtIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r componentTagQueryComponentIDString) Lte(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryComponentIDString) LteIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r componentTagQueryComponentIDString) Gt(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryComponentIDString) GtIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r componentTagQueryComponentIDString) Gte(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryComponentIDString) GteIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r componentTagQueryComponentIDString) Contains(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryComponentIDString) ContainsIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r componentTagQueryComponentIDString) StartsWith(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryComponentIDString) StartsWithIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r componentTagQueryComponentIDString) EndsWith(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryComponentIDString) EndsWithIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r componentTagQueryComponentIDString) Mode(value QueryMode) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryComponentIDString) ModeIfPresent(value *QueryMode) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r componentTagQueryComponentIDString) Not(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryComponentIDString) NotIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r componentTagQueryComponentIDString) HasPrefix(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r componentTagQueryComponentIDString) HasPrefixIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r componentTagQueryComponentIDString) HasSuffix(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r componentTagQueryComponentIDString) HasSuffixIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r componentTagQueryComponentIDString) Field() componentTagPrismaFields {
+	return componentTagFieldComponentID
+}
+
+// base struct
+type componentTagQueryTagTag struct{}
+
+type componentTagQueryTagRelations struct{}
+
+// ComponentTag -> Tag
+//
+// @relation
+// @required
+func (componentTagQueryTagRelations) Where(
+	params ...TagWhereParam,
+) componentTagDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "tag",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (componentTagQueryTagRelations) Fetch() componentTagToTagFindUnique {
+	var v componentTagToTagFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "tag"
+	v.query.Outputs = tagOutput
+
+	return v
+}
+
+func (r componentTagQueryTagRelations) Link(
+	params TagWhereParam,
+) componentTagWithPrismaTagSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return componentTagWithPrismaTagSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return componentTagWithPrismaTagSetParam{
+		data: builder.Field{
+			Name: "tag",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryTagRelations) Unlink() componentTagWithPrismaTagSetParam {
+	var v componentTagWithPrismaTagSetParam
+
+	v = componentTagWithPrismaTagSetParam{
+		data: builder.Field{
+			Name: "tag",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r componentTagQueryTagTag) Field() componentTagPrismaFields {
+	return componentTagFieldTag
+}
+
+// base struct
+type componentTagQueryTagIDString struct{}
+
+// Set the required value of TagID
+func (r componentTagQueryTagIDString) Set(value string) componentTagSetParam {
+
+	return componentTagSetParam{
+		data: builder.Field{
+			Name:  "tag_id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of TagID dynamically
+func (r componentTagQueryTagIDString) SetIfPresent(value *String) componentTagSetParam {
+	if value == nil {
+		return componentTagSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r componentTagQueryTagIDString) Equals(value string) componentTagWithPrismaTagIDEqualsParam {
+
+	return componentTagWithPrismaTagIDEqualsParam{
+		data: builder.Field{
+			Name: "tag_id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryTagIDString) EqualsIfPresent(value *string) componentTagWithPrismaTagIDEqualsParam {
+	if value == nil {
+		return componentTagWithPrismaTagIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r componentTagQueryTagIDString) Order(direction SortOrder) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name:  "tag_id",
+			Value: direction,
+		},
+	}
+}
+
+func (r componentTagQueryTagIDString) Cursor(cursor string) componentTagCursorParam {
+	return componentTagCursorParam{
+		data: builder.Field{
+			Name:  "tag_id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r componentTagQueryTagIDString) In(value []string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "tag_id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryTagIDString) InIfPresent(value []string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r componentTagQueryTagIDString) NotIn(value []string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "tag_id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryTagIDString) NotInIfPresent(value []string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r componentTagQueryTagIDString) Lt(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "tag_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryTagIDString) LtIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r componentTagQueryTagIDString) Lte(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "tag_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryTagIDString) LteIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r componentTagQueryTagIDString) Gt(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "tag_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryTagIDString) GtIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r componentTagQueryTagIDString) Gte(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "tag_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryTagIDString) GteIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r componentTagQueryTagIDString) Contains(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "tag_id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryTagIDString) ContainsIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r componentTagQueryTagIDString) StartsWith(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "tag_id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryTagIDString) StartsWithIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r componentTagQueryTagIDString) EndsWith(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "tag_id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryTagIDString) EndsWithIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r componentTagQueryTagIDString) Mode(value QueryMode) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "tag_id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryTagIDString) ModeIfPresent(value *QueryMode) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r componentTagQueryTagIDString) Not(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "tag_id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentTagQueryTagIDString) NotIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r componentTagQueryTagIDString) HasPrefix(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "tag_id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r componentTagQueryTagIDString) HasPrefixIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r componentTagQueryTagIDString) HasSuffix(value string) componentTagDefaultParam {
+	return componentTagDefaultParam{
+		data: builder.Field{
+			Name: "tag_id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r componentTagQueryTagIDString) HasSuffixIfPresent(value *string) componentTagDefaultParam {
+	if value == nil {
+		return componentTagDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r componentTagQueryTagIDString) Field() componentTagPrismaFields {
+	return componentTagFieldTagID
+}
+
+// Tag acts as a namespaces to access query methods for the Tag model
+var Tag = tagQuery{}
+
+// tagQuery exposes query functions for the tag model
+type tagQuery struct {
+
+	// ID
+	//
+	// @required
+	ID tagQueryIDString
+
+	Organization tagQueryOrganizationRelations
+
+	// OrganizationID
+	//
+	// @required
+	OrganizationID tagQueryOrganizationIDString
+
+	// Created
+	//
+	// @required
+	Created tagQueryCreatedDateTime
+
+	// Updated
+	//
+	// @required
+	Updated tagQueryUpdatedDateTime
+
+	// Name
+	//
+	// @required
+	Name tagQueryNameString
+
+	ComponentTag tagQueryComponentTagRelations
+}
+
+func (tagQuery) Not(params ...TagWhereParam) tagDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tagDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (tagQuery) Or(params ...TagWhereParam) tagDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tagDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (tagQuery) And(params ...TagWhereParam) tagDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tagDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+// base struct
+type tagQueryIDString struct{}
+
+// Set the required value of ID
+func (r tagQueryIDString) Set(value string) tagSetParam {
+
+	return tagSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r tagQueryIDString) SetIfPresent(value *String) tagSetParam {
+	if value == nil {
+		return tagSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r tagQueryIDString) Equals(value string) tagWithPrismaIDEqualsUniqueParam {
+
+	return tagWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryIDString) EqualsIfPresent(value *string) tagWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return tagWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r tagQueryIDString) Order(direction SortOrder) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r tagQueryIDString) Cursor(cursor string) tagCursorParam {
+	return tagCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r tagQueryIDString) In(value []string) tagParamUnique {
+	return tagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryIDString) InIfPresent(value []string) tagParamUnique {
+	if value == nil {
+		return tagParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r tagQueryIDString) NotIn(value []string) tagParamUnique {
+	return tagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryIDString) NotInIfPresent(value []string) tagParamUnique {
+	if value == nil {
+		return tagParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r tagQueryIDString) Lt(value string) tagParamUnique {
+	return tagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryIDString) LtIfPresent(value *string) tagParamUnique {
+	if value == nil {
+		return tagParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r tagQueryIDString) Lte(value string) tagParamUnique {
+	return tagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryIDString) LteIfPresent(value *string) tagParamUnique {
+	if value == nil {
+		return tagParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r tagQueryIDString) Gt(value string) tagParamUnique {
+	return tagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryIDString) GtIfPresent(value *string) tagParamUnique {
+	if value == nil {
+		return tagParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r tagQueryIDString) Gte(value string) tagParamUnique {
+	return tagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryIDString) GteIfPresent(value *string) tagParamUnique {
+	if value == nil {
+		return tagParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r tagQueryIDString) Contains(value string) tagParamUnique {
+	return tagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryIDString) ContainsIfPresent(value *string) tagParamUnique {
+	if value == nil {
+		return tagParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r tagQueryIDString) StartsWith(value string) tagParamUnique {
+	return tagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryIDString) StartsWithIfPresent(value *string) tagParamUnique {
+	if value == nil {
+		return tagParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r tagQueryIDString) EndsWith(value string) tagParamUnique {
+	return tagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryIDString) EndsWithIfPresent(value *string) tagParamUnique {
+	if value == nil {
+		return tagParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r tagQueryIDString) Mode(value QueryMode) tagParamUnique {
+	return tagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryIDString) ModeIfPresent(value *QueryMode) tagParamUnique {
+	if value == nil {
+		return tagParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r tagQueryIDString) Not(value string) tagParamUnique {
+	return tagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryIDString) NotIfPresent(value *string) tagParamUnique {
+	if value == nil {
+		return tagParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r tagQueryIDString) HasPrefix(value string) tagParamUnique {
+	return tagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r tagQueryIDString) HasPrefixIfPresent(value *string) tagParamUnique {
+	if value == nil {
+		return tagParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r tagQueryIDString) HasSuffix(value string) tagParamUnique {
+	return tagParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r tagQueryIDString) HasSuffixIfPresent(value *string) tagParamUnique {
+	if value == nil {
+		return tagParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r tagQueryIDString) Field() tagPrismaFields {
+	return tagFieldID
+}
+
+// base struct
+type tagQueryOrganizationOrganization struct{}
+
+type tagQueryOrganizationRelations struct{}
+
+// Tag -> Organization
+//
+// @relation
+// @required
+func (tagQueryOrganizationRelations) Where(
+	params ...OrganizationWhereParam,
+) tagDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (tagQueryOrganizationRelations) Fetch() tagToOrganizationFindUnique {
+	var v tagToOrganizationFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "organization"
+	v.query.Outputs = organizationOutput
+
+	return v
+}
+
+func (r tagQueryOrganizationRelations) Link(
+	params OrganizationWhereParam,
+) tagWithPrismaOrganizationSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return tagWithPrismaOrganizationSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return tagWithPrismaOrganizationSetParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryOrganizationRelations) Unlink() tagWithPrismaOrganizationSetParam {
+	var v tagWithPrismaOrganizationSetParam
+
+	v = tagWithPrismaOrganizationSetParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r tagQueryOrganizationOrganization) Field() tagPrismaFields {
+	return tagFieldOrganization
+}
+
+// base struct
+type tagQueryOrganizationIDString struct{}
+
+// Set the required value of OrganizationID
+func (r tagQueryOrganizationIDString) Set(value string) tagSetParam {
+
+	return tagSetParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of OrganizationID dynamically
+func (r tagQueryOrganizationIDString) SetIfPresent(value *String) tagSetParam {
+	if value == nil {
+		return tagSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r tagQueryOrganizationIDString) Equals(value string) tagWithPrismaOrganizationIDEqualsParam {
+
+	return tagWithPrismaOrganizationIDEqualsParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryOrganizationIDString) EqualsIfPresent(value *string) tagWithPrismaOrganizationIDEqualsParam {
+	if value == nil {
+		return tagWithPrismaOrganizationIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r tagQueryOrganizationIDString) Order(direction SortOrder) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: direction,
+		},
+	}
+}
+
+func (r tagQueryOrganizationIDString) Cursor(cursor string) tagCursorParam {
+	return tagCursorParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r tagQueryOrganizationIDString) In(value []string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryOrganizationIDString) InIfPresent(value []string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r tagQueryOrganizationIDString) NotIn(value []string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryOrganizationIDString) NotInIfPresent(value []string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r tagQueryOrganizationIDString) Lt(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryOrganizationIDString) LtIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r tagQueryOrganizationIDString) Lte(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryOrganizationIDString) LteIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r tagQueryOrganizationIDString) Gt(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryOrganizationIDString) GtIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r tagQueryOrganizationIDString) Gte(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryOrganizationIDString) GteIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r tagQueryOrganizationIDString) Contains(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryOrganizationIDString) ContainsIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r tagQueryOrganizationIDString) StartsWith(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryOrganizationIDString) StartsWithIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r tagQueryOrganizationIDString) EndsWith(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryOrganizationIDString) EndsWithIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r tagQueryOrganizationIDString) Mode(value QueryMode) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryOrganizationIDString) ModeIfPresent(value *QueryMode) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r tagQueryOrganizationIDString) Not(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryOrganizationIDString) NotIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r tagQueryOrganizationIDString) HasPrefix(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r tagQueryOrganizationIDString) HasPrefixIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r tagQueryOrganizationIDString) HasSuffix(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r tagQueryOrganizationIDString) HasSuffixIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r tagQueryOrganizationIDString) Field() tagPrismaFields {
+	return tagFieldOrganizationID
+}
+
+// base struct
+type tagQueryCreatedDateTime struct{}
+
+// Set the required value of Created
+func (r tagQueryCreatedDateTime) Set(value DateTime) tagSetParam {
+
+	return tagSetParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Created dynamically
+func (r tagQueryCreatedDateTime) SetIfPresent(value *DateTime) tagSetParam {
+	if value == nil {
+		return tagSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r tagQueryCreatedDateTime) Equals(value DateTime) tagWithPrismaCreatedEqualsParam {
+
+	return tagWithPrismaCreatedEqualsParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryCreatedDateTime) EqualsIfPresent(value *DateTime) tagWithPrismaCreatedEqualsParam {
+	if value == nil {
+		return tagWithPrismaCreatedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r tagQueryCreatedDateTime) Order(direction SortOrder) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: direction,
+		},
+	}
+}
+
+func (r tagQueryCreatedDateTime) Cursor(cursor DateTime) tagCursorParam {
+	return tagCursorParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: cursor,
+		},
+	}
+}
+
+func (r tagQueryCreatedDateTime) In(value []DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryCreatedDateTime) InIfPresent(value []DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r tagQueryCreatedDateTime) NotIn(value []DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryCreatedDateTime) NotInIfPresent(value []DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r tagQueryCreatedDateTime) Lt(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryCreatedDateTime) LtIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r tagQueryCreatedDateTime) Lte(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryCreatedDateTime) LteIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r tagQueryCreatedDateTime) Gt(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryCreatedDateTime) GtIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r tagQueryCreatedDateTime) Gte(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryCreatedDateTime) GteIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r tagQueryCreatedDateTime) Not(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryCreatedDateTime) NotIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r tagQueryCreatedDateTime) Before(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r tagQueryCreatedDateTime) BeforeIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r tagQueryCreatedDateTime) After(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r tagQueryCreatedDateTime) AfterIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r tagQueryCreatedDateTime) BeforeEquals(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r tagQueryCreatedDateTime) BeforeEqualsIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r tagQueryCreatedDateTime) AfterEquals(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r tagQueryCreatedDateTime) AfterEqualsIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r tagQueryCreatedDateTime) Field() tagPrismaFields {
+	return tagFieldCreated
+}
+
+// base struct
+type tagQueryUpdatedDateTime struct{}
+
+// Set the required value of Updated
+func (r tagQueryUpdatedDateTime) Set(value DateTime) tagSetParam {
+
+	return tagSetParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Updated dynamically
+func (r tagQueryUpdatedDateTime) SetIfPresent(value *DateTime) tagSetParam {
+	if value == nil {
+		return tagSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r tagQueryUpdatedDateTime) Equals(value DateTime) tagWithPrismaUpdatedEqualsParam {
+
+	return tagWithPrismaUpdatedEqualsParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryUpdatedDateTime) EqualsIfPresent(value *DateTime) tagWithPrismaUpdatedEqualsParam {
+	if value == nil {
+		return tagWithPrismaUpdatedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r tagQueryUpdatedDateTime) Order(direction SortOrder) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: direction,
+		},
+	}
+}
+
+func (r tagQueryUpdatedDateTime) Cursor(cursor DateTime) tagCursorParam {
+	return tagCursorParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: cursor,
+		},
+	}
+}
+
+func (r tagQueryUpdatedDateTime) In(value []DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryUpdatedDateTime) InIfPresent(value []DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r tagQueryUpdatedDateTime) NotIn(value []DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryUpdatedDateTime) NotInIfPresent(value []DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r tagQueryUpdatedDateTime) Lt(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryUpdatedDateTime) LtIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r tagQueryUpdatedDateTime) Lte(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryUpdatedDateTime) LteIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r tagQueryUpdatedDateTime) Gt(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryUpdatedDateTime) GtIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r tagQueryUpdatedDateTime) Gte(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryUpdatedDateTime) GteIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r tagQueryUpdatedDateTime) Not(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryUpdatedDateTime) NotIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r tagQueryUpdatedDateTime) Before(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r tagQueryUpdatedDateTime) BeforeIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r tagQueryUpdatedDateTime) After(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r tagQueryUpdatedDateTime) AfterIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r tagQueryUpdatedDateTime) BeforeEquals(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r tagQueryUpdatedDateTime) BeforeEqualsIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r tagQueryUpdatedDateTime) AfterEquals(value DateTime) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r tagQueryUpdatedDateTime) AfterEqualsIfPresent(value *DateTime) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r tagQueryUpdatedDateTime) Field() tagPrismaFields {
+	return tagFieldUpdated
+}
+
+// base struct
+type tagQueryNameString struct{}
+
+// Set the required value of Name
+func (r tagQueryNameString) Set(value string) tagWithPrismaNameSetParam {
+
+	return tagWithPrismaNameSetParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Name dynamically
+func (r tagQueryNameString) SetIfPresent(value *String) tagWithPrismaNameSetParam {
+	if value == nil {
+		return tagWithPrismaNameSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r tagQueryNameString) Equals(value string) tagWithPrismaNameEqualsParam {
+
+	return tagWithPrismaNameEqualsParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryNameString) EqualsIfPresent(value *string) tagWithPrismaNameEqualsParam {
+	if value == nil {
+		return tagWithPrismaNameEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r tagQueryNameString) Order(direction SortOrder) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: direction,
+		},
+	}
+}
+
+func (r tagQueryNameString) Cursor(cursor string) tagCursorParam {
+	return tagCursorParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: cursor,
+		},
+	}
+}
+
+func (r tagQueryNameString) In(value []string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryNameString) InIfPresent(value []string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r tagQueryNameString) NotIn(value []string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryNameString) NotInIfPresent(value []string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r tagQueryNameString) Lt(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryNameString) LtIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r tagQueryNameString) Lte(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryNameString) LteIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r tagQueryNameString) Gt(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryNameString) GtIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r tagQueryNameString) Gte(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryNameString) GteIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r tagQueryNameString) Contains(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryNameString) ContainsIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r tagQueryNameString) StartsWith(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryNameString) StartsWithIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r tagQueryNameString) EndsWith(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryNameString) EndsWithIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r tagQueryNameString) Mode(value QueryMode) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryNameString) ModeIfPresent(value *QueryMode) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r tagQueryNameString) Not(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryNameString) NotIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r tagQueryNameString) HasPrefix(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r tagQueryNameString) HasPrefixIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r tagQueryNameString) HasSuffix(value string) tagDefaultParam {
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r tagQueryNameString) HasSuffixIfPresent(value *string) tagDefaultParam {
+	if value == nil {
+		return tagDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r tagQueryNameString) Field() tagPrismaFields {
+	return tagFieldName
+}
+
+// base struct
+type tagQueryComponentTagComponentTag struct{}
+
+type tagQueryComponentTagRelations struct{}
+
+// Tag -> ComponentTag
+//
+// @relation
+// @required
+func (tagQueryComponentTagRelations) Some(
+	params ...ComponentTagWhereParam,
+) tagDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "ComponentTag",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Tag -> ComponentTag
+//
+// @relation
+// @required
+func (tagQueryComponentTagRelations) Every(
+	params ...ComponentTagWhereParam,
+) tagDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "ComponentTag",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Tag -> ComponentTag
+//
+// @relation
+// @required
+func (tagQueryComponentTagRelations) None(
+	params ...ComponentTagWhereParam,
+) tagDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tagDefaultParam{
+		data: builder.Field{
+			Name: "ComponentTag",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (tagQueryComponentTagRelations) Fetch(
+
+	params ...ComponentTagWhereParam,
+
+) tagToComponentTagFindMany {
+	var v tagToComponentTagFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "ComponentTag"
+	v.query.Outputs = componentTagOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r tagQueryComponentTagRelations) Link(
+	params ...ComponentTagWhereParam,
+) tagSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tagSetParam{
+		data: builder.Field{
+			Name: "ComponentTag",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r tagQueryComponentTagRelations) Unlink(
+	params ...ComponentTagWhereParam,
+) tagSetParam {
+	var v tagSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = tagSetParam{
+		data: builder.Field{
+			Name: "ComponentTag",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r tagQueryComponentTagComponentTag) Field() tagPrismaFields {
+	return tagFieldComponentTag
+}
+
+// Document acts as a namespaces to access query methods for the Document model
+var Document = documentQuery{}
+
+// documentQuery exposes query functions for the document model
+type documentQuery struct {
+
+	// ID
+	//
+	// @required
+	ID documentQueryIDString
+
+	Organization documentQueryOrganizationRelations
+
+	// OrganizationID
+	//
+	// @required
+	OrganizationID documentQueryOrganizationIDString
+
+	// Created
+	//
+	// @required
+	Created documentQueryCreatedDateTime
+
+	// Updated
+	//
+	// @required
+	Updated documentQueryUpdatedDateTime
+
+	// Name
+	//
+	// @required
+	Name documentQueryNameString
+
+	// Content
+	//
+	// @required
+	Content documentQueryContentJson
+
+	Blocks documentQueryBlocksRelations
+}
+
+func (documentQuery) Not(params ...DocumentWhereParam) documentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return documentDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (documentQuery) Or(params ...DocumentWhereParam) documentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return documentDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (documentQuery) And(params ...DocumentWhereParam) documentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return documentDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+// base struct
+type documentQueryIDString struct{}
+
+// Set the required value of ID
+func (r documentQueryIDString) Set(value string) documentSetParam {
+
+	return documentSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r documentQueryIDString) SetIfPresent(value *String) documentSetParam {
+	if value == nil {
+		return documentSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r documentQueryIDString) Equals(value string) documentWithPrismaIDEqualsUniqueParam {
+
+	return documentWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryIDString) EqualsIfPresent(value *string) documentWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return documentWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r documentQueryIDString) Order(direction SortOrder) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r documentQueryIDString) Cursor(cursor string) documentCursorParam {
+	return documentCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r documentQueryIDString) In(value []string) documentParamUnique {
+	return documentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryIDString) InIfPresent(value []string) documentParamUnique {
+	if value == nil {
+		return documentParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r documentQueryIDString) NotIn(value []string) documentParamUnique {
+	return documentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryIDString) NotInIfPresent(value []string) documentParamUnique {
+	if value == nil {
+		return documentParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r documentQueryIDString) Lt(value string) documentParamUnique {
+	return documentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryIDString) LtIfPresent(value *string) documentParamUnique {
+	if value == nil {
+		return documentParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r documentQueryIDString) Lte(value string) documentParamUnique {
+	return documentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryIDString) LteIfPresent(value *string) documentParamUnique {
+	if value == nil {
+		return documentParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r documentQueryIDString) Gt(value string) documentParamUnique {
+	return documentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryIDString) GtIfPresent(value *string) documentParamUnique {
+	if value == nil {
+		return documentParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r documentQueryIDString) Gte(value string) documentParamUnique {
+	return documentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryIDString) GteIfPresent(value *string) documentParamUnique {
+	if value == nil {
+		return documentParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r documentQueryIDString) Contains(value string) documentParamUnique {
+	return documentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryIDString) ContainsIfPresent(value *string) documentParamUnique {
+	if value == nil {
+		return documentParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r documentQueryIDString) StartsWith(value string) documentParamUnique {
+	return documentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryIDString) StartsWithIfPresent(value *string) documentParamUnique {
+	if value == nil {
+		return documentParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r documentQueryIDString) EndsWith(value string) documentParamUnique {
+	return documentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryIDString) EndsWithIfPresent(value *string) documentParamUnique {
+	if value == nil {
+		return documentParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r documentQueryIDString) Mode(value QueryMode) documentParamUnique {
+	return documentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryIDString) ModeIfPresent(value *QueryMode) documentParamUnique {
+	if value == nil {
+		return documentParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r documentQueryIDString) Not(value string) documentParamUnique {
+	return documentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryIDString) NotIfPresent(value *string) documentParamUnique {
+	if value == nil {
+		return documentParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r documentQueryIDString) HasPrefix(value string) documentParamUnique {
+	return documentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r documentQueryIDString) HasPrefixIfPresent(value *string) documentParamUnique {
+	if value == nil {
+		return documentParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r documentQueryIDString) HasSuffix(value string) documentParamUnique {
+	return documentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r documentQueryIDString) HasSuffixIfPresent(value *string) documentParamUnique {
+	if value == nil {
+		return documentParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r documentQueryIDString) Field() documentPrismaFields {
+	return documentFieldID
+}
+
+// base struct
+type documentQueryOrganizationOrganization struct{}
+
+type documentQueryOrganizationRelations struct{}
+
+// Document -> Organization
+//
+// @relation
+// @required
+func (documentQueryOrganizationRelations) Where(
+	params ...OrganizationWhereParam,
+) documentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (documentQueryOrganizationRelations) Fetch() documentToOrganizationFindUnique {
+	var v documentToOrganizationFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "organization"
+	v.query.Outputs = organizationOutput
+
+	return v
+}
+
+func (r documentQueryOrganizationRelations) Link(
+	params OrganizationWhereParam,
+) documentWithPrismaOrganizationSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return documentWithPrismaOrganizationSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return documentWithPrismaOrganizationSetParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryOrganizationRelations) Unlink() documentWithPrismaOrganizationSetParam {
+	var v documentWithPrismaOrganizationSetParam
+
+	v = documentWithPrismaOrganizationSetParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r documentQueryOrganizationOrganization) Field() documentPrismaFields {
+	return documentFieldOrganization
+}
+
+// base struct
+type documentQueryOrganizationIDString struct{}
+
+// Set the required value of OrganizationID
+func (r documentQueryOrganizationIDString) Set(value string) documentSetParam {
+
+	return documentSetParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of OrganizationID dynamically
+func (r documentQueryOrganizationIDString) SetIfPresent(value *String) documentSetParam {
+	if value == nil {
+		return documentSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r documentQueryOrganizationIDString) Equals(value string) documentWithPrismaOrganizationIDEqualsParam {
+
+	return documentWithPrismaOrganizationIDEqualsParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryOrganizationIDString) EqualsIfPresent(value *string) documentWithPrismaOrganizationIDEqualsParam {
+	if value == nil {
+		return documentWithPrismaOrganizationIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r documentQueryOrganizationIDString) Order(direction SortOrder) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: direction,
+		},
+	}
+}
+
+func (r documentQueryOrganizationIDString) Cursor(cursor string) documentCursorParam {
+	return documentCursorParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r documentQueryOrganizationIDString) In(value []string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryOrganizationIDString) InIfPresent(value []string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r documentQueryOrganizationIDString) NotIn(value []string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryOrganizationIDString) NotInIfPresent(value []string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r documentQueryOrganizationIDString) Lt(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryOrganizationIDString) LtIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r documentQueryOrganizationIDString) Lte(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryOrganizationIDString) LteIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r documentQueryOrganizationIDString) Gt(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryOrganizationIDString) GtIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r documentQueryOrganizationIDString) Gte(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryOrganizationIDString) GteIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r documentQueryOrganizationIDString) Contains(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryOrganizationIDString) ContainsIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r documentQueryOrganizationIDString) StartsWith(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryOrganizationIDString) StartsWithIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r documentQueryOrganizationIDString) EndsWith(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryOrganizationIDString) EndsWithIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r documentQueryOrganizationIDString) Mode(value QueryMode) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryOrganizationIDString) ModeIfPresent(value *QueryMode) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r documentQueryOrganizationIDString) Not(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryOrganizationIDString) NotIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r documentQueryOrganizationIDString) HasPrefix(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r documentQueryOrganizationIDString) HasPrefixIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r documentQueryOrganizationIDString) HasSuffix(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r documentQueryOrganizationIDString) HasSuffixIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r documentQueryOrganizationIDString) Field() documentPrismaFields {
+	return documentFieldOrganizationID
+}
+
+// base struct
+type documentQueryCreatedDateTime struct{}
+
+// Set the required value of Created
+func (r documentQueryCreatedDateTime) Set(value DateTime) documentSetParam {
+
+	return documentSetParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Created dynamically
+func (r documentQueryCreatedDateTime) SetIfPresent(value *DateTime) documentSetParam {
+	if value == nil {
+		return documentSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r documentQueryCreatedDateTime) Equals(value DateTime) documentWithPrismaCreatedEqualsParam {
+
+	return documentWithPrismaCreatedEqualsParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryCreatedDateTime) EqualsIfPresent(value *DateTime) documentWithPrismaCreatedEqualsParam {
+	if value == nil {
+		return documentWithPrismaCreatedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r documentQueryCreatedDateTime) Order(direction SortOrder) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: direction,
+		},
+	}
+}
+
+func (r documentQueryCreatedDateTime) Cursor(cursor DateTime) documentCursorParam {
+	return documentCursorParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: cursor,
+		},
+	}
+}
+
+func (r documentQueryCreatedDateTime) In(value []DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryCreatedDateTime) InIfPresent(value []DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r documentQueryCreatedDateTime) NotIn(value []DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryCreatedDateTime) NotInIfPresent(value []DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r documentQueryCreatedDateTime) Lt(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryCreatedDateTime) LtIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r documentQueryCreatedDateTime) Lte(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryCreatedDateTime) LteIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r documentQueryCreatedDateTime) Gt(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryCreatedDateTime) GtIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r documentQueryCreatedDateTime) Gte(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryCreatedDateTime) GteIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r documentQueryCreatedDateTime) Not(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryCreatedDateTime) NotIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r documentQueryCreatedDateTime) Before(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r documentQueryCreatedDateTime) BeforeIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r documentQueryCreatedDateTime) After(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r documentQueryCreatedDateTime) AfterIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r documentQueryCreatedDateTime) BeforeEquals(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r documentQueryCreatedDateTime) BeforeEqualsIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r documentQueryCreatedDateTime) AfterEquals(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r documentQueryCreatedDateTime) AfterEqualsIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r documentQueryCreatedDateTime) Field() documentPrismaFields {
+	return documentFieldCreated
+}
+
+// base struct
+type documentQueryUpdatedDateTime struct{}
+
+// Set the required value of Updated
+func (r documentQueryUpdatedDateTime) Set(value DateTime) documentSetParam {
+
+	return documentSetParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Updated dynamically
+func (r documentQueryUpdatedDateTime) SetIfPresent(value *DateTime) documentSetParam {
+	if value == nil {
+		return documentSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r documentQueryUpdatedDateTime) Equals(value DateTime) documentWithPrismaUpdatedEqualsParam {
+
+	return documentWithPrismaUpdatedEqualsParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryUpdatedDateTime) EqualsIfPresent(value *DateTime) documentWithPrismaUpdatedEqualsParam {
+	if value == nil {
+		return documentWithPrismaUpdatedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r documentQueryUpdatedDateTime) Order(direction SortOrder) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: direction,
+		},
+	}
+}
+
+func (r documentQueryUpdatedDateTime) Cursor(cursor DateTime) documentCursorParam {
+	return documentCursorParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: cursor,
+		},
+	}
+}
+
+func (r documentQueryUpdatedDateTime) In(value []DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryUpdatedDateTime) InIfPresent(value []DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r documentQueryUpdatedDateTime) NotIn(value []DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryUpdatedDateTime) NotInIfPresent(value []DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r documentQueryUpdatedDateTime) Lt(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryUpdatedDateTime) LtIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r documentQueryUpdatedDateTime) Lte(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryUpdatedDateTime) LteIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r documentQueryUpdatedDateTime) Gt(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryUpdatedDateTime) GtIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r documentQueryUpdatedDateTime) Gte(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryUpdatedDateTime) GteIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r documentQueryUpdatedDateTime) Not(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryUpdatedDateTime) NotIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r documentQueryUpdatedDateTime) Before(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r documentQueryUpdatedDateTime) BeforeIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r documentQueryUpdatedDateTime) After(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r documentQueryUpdatedDateTime) AfterIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r documentQueryUpdatedDateTime) BeforeEquals(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r documentQueryUpdatedDateTime) BeforeEqualsIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r documentQueryUpdatedDateTime) AfterEquals(value DateTime) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r documentQueryUpdatedDateTime) AfterEqualsIfPresent(value *DateTime) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r documentQueryUpdatedDateTime) Field() documentPrismaFields {
+	return documentFieldUpdated
+}
+
+// base struct
+type documentQueryNameString struct{}
+
+// Set the required value of Name
+func (r documentQueryNameString) Set(value string) documentWithPrismaNameSetParam {
+
+	return documentWithPrismaNameSetParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Name dynamically
+func (r documentQueryNameString) SetIfPresent(value *String) documentWithPrismaNameSetParam {
+	if value == nil {
+		return documentWithPrismaNameSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r documentQueryNameString) Equals(value string) documentWithPrismaNameEqualsParam {
+
+	return documentWithPrismaNameEqualsParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryNameString) EqualsIfPresent(value *string) documentWithPrismaNameEqualsParam {
+	if value == nil {
+		return documentWithPrismaNameEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r documentQueryNameString) Order(direction SortOrder) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: direction,
+		},
+	}
+}
+
+func (r documentQueryNameString) Cursor(cursor string) documentCursorParam {
+	return documentCursorParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: cursor,
+		},
+	}
+}
+
+func (r documentQueryNameString) In(value []string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryNameString) InIfPresent(value []string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r documentQueryNameString) NotIn(value []string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryNameString) NotInIfPresent(value []string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r documentQueryNameString) Lt(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryNameString) LtIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r documentQueryNameString) Lte(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryNameString) LteIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r documentQueryNameString) Gt(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryNameString) GtIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r documentQueryNameString) Gte(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryNameString) GteIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r documentQueryNameString) Contains(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryNameString) ContainsIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r documentQueryNameString) StartsWith(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryNameString) StartsWithIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r documentQueryNameString) EndsWith(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryNameString) EndsWithIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r documentQueryNameString) Mode(value QueryMode) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryNameString) ModeIfPresent(value *QueryMode) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r documentQueryNameString) Not(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryNameString) NotIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r documentQueryNameString) HasPrefix(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r documentQueryNameString) HasPrefixIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r documentQueryNameString) HasSuffix(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r documentQueryNameString) HasSuffixIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r documentQueryNameString) Field() documentPrismaFields {
+	return documentFieldName
+}
+
+// base struct
+type documentQueryContentJson struct{}
+
+// Set the required value of Content
+func (r documentQueryContentJson) Set(value JSON) documentWithPrismaContentSetParam {
+
+	return documentWithPrismaContentSetParam{
+		data: builder.Field{
+			Name:  "content",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Content dynamically
+func (r documentQueryContentJson) SetIfPresent(value *JSON) documentWithPrismaContentSetParam {
+	if value == nil {
+		return documentWithPrismaContentSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r documentQueryContentJson) Equals(value JSON) documentWithPrismaContentEqualsParam {
+
+	return documentWithPrismaContentEqualsParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryContentJson) EqualsIfPresent(value *JSON) documentWithPrismaContentEqualsParam {
+	if value == nil {
+		return documentWithPrismaContentEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r documentQueryContentJson) Order(direction SortOrder) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name:  "content",
+			Value: direction,
+		},
+	}
+}
+
+func (r documentQueryContentJson) Cursor(cursor JSON) documentCursorParam {
+	return documentCursorParam{
+		data: builder.Field{
+			Name:  "content",
+			Value: cursor,
+		},
+	}
+}
+
+func (r documentQueryContentJson) Path(value []string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "path",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryContentJson) PathIfPresent(value []string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Path(value)
+}
+
+func (r documentQueryContentJson) StringContains(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "string_contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryContentJson) StringContainsIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.StringContains(*value)
+}
+
+func (r documentQueryContentJson) StringStartsWith(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "string_starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryContentJson) StringStartsWithIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.StringStartsWith(*value)
+}
+
+func (r documentQueryContentJson) StringEndsWith(value string) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "string_ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryContentJson) StringEndsWithIfPresent(value *string) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.StringEndsWith(*value)
+}
+
+func (r documentQueryContentJson) ArrayContains(value JSON) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "array_contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryContentJson) ArrayContainsIfPresent(value *JSON) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.ArrayContains(*value)
+}
+
+func (r documentQueryContentJson) ArrayStartsWith(value JSON) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "array_starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryContentJson) ArrayStartsWithIfPresent(value *JSON) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.ArrayStartsWith(*value)
+}
+
+func (r documentQueryContentJson) ArrayEndsWith(value JSON) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "array_ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryContentJson) ArrayEndsWithIfPresent(value *JSON) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.ArrayEndsWith(*value)
+}
+
+func (r documentQueryContentJson) Lt(value JSON) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryContentJson) LtIfPresent(value *JSON) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r documentQueryContentJson) Lte(value JSON) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryContentJson) LteIfPresent(value *JSON) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r documentQueryContentJson) Gt(value JSON) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryContentJson) GtIfPresent(value *JSON) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r documentQueryContentJson) Gte(value JSON) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryContentJson) GteIfPresent(value *JSON) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r documentQueryContentJson) Not(value JSONNullValueFilter) documentDefaultParam {
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryContentJson) NotIfPresent(value *JSONNullValueFilter) documentDefaultParam {
+	if value == nil {
+		return documentDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r documentQueryContentJson) Field() documentPrismaFields {
+	return documentFieldContent
+}
+
+// base struct
+type documentQueryBlocksDocumentBlock struct{}
+
+type documentQueryBlocksRelations struct{}
+
+// Document -> Blocks
+//
+// @relation
+// @required
+func (documentQueryBlocksRelations) Some(
+	params ...DocumentBlockWhereParam,
+) documentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "blocks",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Document -> Blocks
+//
+// @relation
+// @required
+func (documentQueryBlocksRelations) Every(
+	params ...DocumentBlockWhereParam,
+) documentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "blocks",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Document -> Blocks
+//
+// @relation
+// @required
+func (documentQueryBlocksRelations) None(
+	params ...DocumentBlockWhereParam,
+) documentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return documentDefaultParam{
+		data: builder.Field{
+			Name: "blocks",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (documentQueryBlocksRelations) Fetch(
+
+	params ...DocumentBlockWhereParam,
+
+) documentToBlocksFindMany {
+	var v documentToBlocksFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "blocks"
+	v.query.Outputs = documentBlockOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r documentQueryBlocksRelations) Link(
+	params ...DocumentBlockWhereParam,
+) documentSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return documentSetParam{
+		data: builder.Field{
+			Name: "blocks",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r documentQueryBlocksRelations) Unlink(
+	params ...DocumentBlockWhereParam,
+) documentSetParam {
+	var v documentSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = documentSetParam{
+		data: builder.Field{
+			Name: "blocks",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r documentQueryBlocksDocumentBlock) Field() documentPrismaFields {
+	return documentFieldBlocks
+}
+
+// DocumentBlock acts as a namespaces to access query methods for the DocumentBlock model
+var DocumentBlock = documentBlockQuery{}
+
+// documentBlockQuery exposes query functions for the documentBlock model
+type documentBlockQuery struct {
+
+	// ID
+	//
+	// @required
+	ID documentBlockQueryIDString
+
+	// Created
+	//
+	// @required
+	Created documentBlockQueryCreatedDateTime
+
+	// Updated
+	//
+	// @required
+	Updated documentBlockQueryUpdatedDateTime
+
+	Document documentBlockQueryDocumentRelations
+
+	// DocumentID
+	//
+	// @required
+	DocumentID documentBlockQueryDocumentIDString
+
+	Block documentBlockQueryBlockRelations
+
+	// BlockID
+	//
+	// @required
+	BlockID documentBlockQueryBlockIDString
+
+	// Position
+	//
+	// @required
+	Position documentBlockQueryPositionInt
+}
+
+func (documentBlockQuery) Not(params ...DocumentBlockWhereParam) documentBlockDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (documentBlockQuery) Or(params ...DocumentBlockWhereParam) documentBlockDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (documentBlockQuery) And(params ...DocumentBlockWhereParam) documentBlockDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+// base struct
+type documentBlockQueryIDString struct{}
+
+// Set the required value of ID
+func (r documentBlockQueryIDString) Set(value string) documentBlockSetParam {
+
+	return documentBlockSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r documentBlockQueryIDString) SetIfPresent(value *String) documentBlockSetParam {
+	if value == nil {
+		return documentBlockSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r documentBlockQueryIDString) Equals(value string) documentBlockWithPrismaIDEqualsUniqueParam {
+
+	return documentBlockWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryIDString) EqualsIfPresent(value *string) documentBlockWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return documentBlockWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r documentBlockQueryIDString) Order(direction SortOrder) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r documentBlockQueryIDString) Cursor(cursor string) documentBlockCursorParam {
+	return documentBlockCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r documentBlockQueryIDString) In(value []string) documentBlockParamUnique {
+	return documentBlockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryIDString) InIfPresent(value []string) documentBlockParamUnique {
+	if value == nil {
+		return documentBlockParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r documentBlockQueryIDString) NotIn(value []string) documentBlockParamUnique {
+	return documentBlockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryIDString) NotInIfPresent(value []string) documentBlockParamUnique {
+	if value == nil {
+		return documentBlockParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r documentBlockQueryIDString) Lt(value string) documentBlockParamUnique {
+	return documentBlockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryIDString) LtIfPresent(value *string) documentBlockParamUnique {
+	if value == nil {
+		return documentBlockParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r documentBlockQueryIDString) Lte(value string) documentBlockParamUnique {
+	return documentBlockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryIDString) LteIfPresent(value *string) documentBlockParamUnique {
+	if value == nil {
+		return documentBlockParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r documentBlockQueryIDString) Gt(value string) documentBlockParamUnique {
+	return documentBlockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryIDString) GtIfPresent(value *string) documentBlockParamUnique {
+	if value == nil {
+		return documentBlockParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r documentBlockQueryIDString) Gte(value string) documentBlockParamUnique {
+	return documentBlockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryIDString) GteIfPresent(value *string) documentBlockParamUnique {
+	if value == nil {
+		return documentBlockParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r documentBlockQueryIDString) Contains(value string) documentBlockParamUnique {
+	return documentBlockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryIDString) ContainsIfPresent(value *string) documentBlockParamUnique {
+	if value == nil {
+		return documentBlockParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r documentBlockQueryIDString) StartsWith(value string) documentBlockParamUnique {
+	return documentBlockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryIDString) StartsWithIfPresent(value *string) documentBlockParamUnique {
+	if value == nil {
+		return documentBlockParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r documentBlockQueryIDString) EndsWith(value string) documentBlockParamUnique {
+	return documentBlockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryIDString) EndsWithIfPresent(value *string) documentBlockParamUnique {
+	if value == nil {
+		return documentBlockParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r documentBlockQueryIDString) Mode(value QueryMode) documentBlockParamUnique {
+	return documentBlockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryIDString) ModeIfPresent(value *QueryMode) documentBlockParamUnique {
+	if value == nil {
+		return documentBlockParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r documentBlockQueryIDString) Not(value string) documentBlockParamUnique {
+	return documentBlockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryIDString) NotIfPresent(value *string) documentBlockParamUnique {
+	if value == nil {
+		return documentBlockParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r documentBlockQueryIDString) HasPrefix(value string) documentBlockParamUnique {
+	return documentBlockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r documentBlockQueryIDString) HasPrefixIfPresent(value *string) documentBlockParamUnique {
+	if value == nil {
+		return documentBlockParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r documentBlockQueryIDString) HasSuffix(value string) documentBlockParamUnique {
+	return documentBlockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r documentBlockQueryIDString) HasSuffixIfPresent(value *string) documentBlockParamUnique {
+	if value == nil {
+		return documentBlockParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r documentBlockQueryIDString) Field() documentBlockPrismaFields {
+	return documentBlockFieldID
+}
+
+// base struct
+type documentBlockQueryCreatedDateTime struct{}
+
+// Set the required value of Created
+func (r documentBlockQueryCreatedDateTime) Set(value DateTime) documentBlockSetParam {
+
+	return documentBlockSetParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Created dynamically
+func (r documentBlockQueryCreatedDateTime) SetIfPresent(value *DateTime) documentBlockSetParam {
+	if value == nil {
+		return documentBlockSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r documentBlockQueryCreatedDateTime) Equals(value DateTime) documentBlockWithPrismaCreatedEqualsParam {
+
+	return documentBlockWithPrismaCreatedEqualsParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryCreatedDateTime) EqualsIfPresent(value *DateTime) documentBlockWithPrismaCreatedEqualsParam {
+	if value == nil {
+		return documentBlockWithPrismaCreatedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r documentBlockQueryCreatedDateTime) Order(direction SortOrder) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: direction,
+		},
+	}
+}
+
+func (r documentBlockQueryCreatedDateTime) Cursor(cursor DateTime) documentBlockCursorParam {
+	return documentBlockCursorParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: cursor,
+		},
+	}
+}
+
+func (r documentBlockQueryCreatedDateTime) In(value []DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryCreatedDateTime) InIfPresent(value []DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r documentBlockQueryCreatedDateTime) NotIn(value []DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryCreatedDateTime) NotInIfPresent(value []DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r documentBlockQueryCreatedDateTime) Lt(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryCreatedDateTime) LtIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r documentBlockQueryCreatedDateTime) Lte(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryCreatedDateTime) LteIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r documentBlockQueryCreatedDateTime) Gt(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryCreatedDateTime) GtIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r documentBlockQueryCreatedDateTime) Gte(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryCreatedDateTime) GteIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r documentBlockQueryCreatedDateTime) Not(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryCreatedDateTime) NotIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r documentBlockQueryCreatedDateTime) Before(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r documentBlockQueryCreatedDateTime) BeforeIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r documentBlockQueryCreatedDateTime) After(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r documentBlockQueryCreatedDateTime) AfterIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r documentBlockQueryCreatedDateTime) BeforeEquals(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r documentBlockQueryCreatedDateTime) BeforeEqualsIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r documentBlockQueryCreatedDateTime) AfterEquals(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r documentBlockQueryCreatedDateTime) AfterEqualsIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r documentBlockQueryCreatedDateTime) Field() documentBlockPrismaFields {
+	return documentBlockFieldCreated
+}
+
+// base struct
+type documentBlockQueryUpdatedDateTime struct{}
+
+// Set the required value of Updated
+func (r documentBlockQueryUpdatedDateTime) Set(value DateTime) documentBlockSetParam {
+
+	return documentBlockSetParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Updated dynamically
+func (r documentBlockQueryUpdatedDateTime) SetIfPresent(value *DateTime) documentBlockSetParam {
+	if value == nil {
+		return documentBlockSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r documentBlockQueryUpdatedDateTime) Equals(value DateTime) documentBlockWithPrismaUpdatedEqualsParam {
+
+	return documentBlockWithPrismaUpdatedEqualsParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryUpdatedDateTime) EqualsIfPresent(value *DateTime) documentBlockWithPrismaUpdatedEqualsParam {
+	if value == nil {
+		return documentBlockWithPrismaUpdatedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r documentBlockQueryUpdatedDateTime) Order(direction SortOrder) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: direction,
+		},
+	}
+}
+
+func (r documentBlockQueryUpdatedDateTime) Cursor(cursor DateTime) documentBlockCursorParam {
+	return documentBlockCursorParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: cursor,
+		},
+	}
+}
+
+func (r documentBlockQueryUpdatedDateTime) In(value []DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryUpdatedDateTime) InIfPresent(value []DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r documentBlockQueryUpdatedDateTime) NotIn(value []DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryUpdatedDateTime) NotInIfPresent(value []DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r documentBlockQueryUpdatedDateTime) Lt(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryUpdatedDateTime) LtIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r documentBlockQueryUpdatedDateTime) Lte(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryUpdatedDateTime) LteIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r documentBlockQueryUpdatedDateTime) Gt(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryUpdatedDateTime) GtIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r documentBlockQueryUpdatedDateTime) Gte(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryUpdatedDateTime) GteIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r documentBlockQueryUpdatedDateTime) Not(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryUpdatedDateTime) NotIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r documentBlockQueryUpdatedDateTime) Before(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r documentBlockQueryUpdatedDateTime) BeforeIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r documentBlockQueryUpdatedDateTime) After(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r documentBlockQueryUpdatedDateTime) AfterIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r documentBlockQueryUpdatedDateTime) BeforeEquals(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r documentBlockQueryUpdatedDateTime) BeforeEqualsIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r documentBlockQueryUpdatedDateTime) AfterEquals(value DateTime) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r documentBlockQueryUpdatedDateTime) AfterEqualsIfPresent(value *DateTime) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r documentBlockQueryUpdatedDateTime) Field() documentBlockPrismaFields {
+	return documentBlockFieldUpdated
+}
+
+// base struct
+type documentBlockQueryDocumentDocument struct{}
+
+type documentBlockQueryDocumentRelations struct{}
+
+// DocumentBlock -> Document
+//
+// @relation
+// @required
+func (documentBlockQueryDocumentRelations) Where(
+	params ...DocumentWhereParam,
+) documentBlockDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "document",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (documentBlockQueryDocumentRelations) Fetch() documentBlockToDocumentFindUnique {
+	var v documentBlockToDocumentFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "document"
+	v.query.Outputs = documentOutput
+
+	return v
+}
+
+func (r documentBlockQueryDocumentRelations) Link(
+	params DocumentWhereParam,
+) documentBlockWithPrismaDocumentSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return documentBlockWithPrismaDocumentSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return documentBlockWithPrismaDocumentSetParam{
+		data: builder.Field{
+			Name: "document",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryDocumentRelations) Unlink() documentBlockWithPrismaDocumentSetParam {
+	var v documentBlockWithPrismaDocumentSetParam
+
+	v = documentBlockWithPrismaDocumentSetParam{
+		data: builder.Field{
+			Name: "document",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r documentBlockQueryDocumentDocument) Field() documentBlockPrismaFields {
+	return documentBlockFieldDocument
+}
+
+// base struct
+type documentBlockQueryDocumentIDString struct{}
+
+// Set the required value of DocumentID
+func (r documentBlockQueryDocumentIDString) Set(value string) documentBlockSetParam {
+
+	return documentBlockSetParam{
+		data: builder.Field{
+			Name:  "document_id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of DocumentID dynamically
+func (r documentBlockQueryDocumentIDString) SetIfPresent(value *String) documentBlockSetParam {
+	if value == nil {
+		return documentBlockSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r documentBlockQueryDocumentIDString) Equals(value string) documentBlockWithPrismaDocumentIDEqualsParam {
+
+	return documentBlockWithPrismaDocumentIDEqualsParam{
+		data: builder.Field{
+			Name: "document_id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryDocumentIDString) EqualsIfPresent(value *string) documentBlockWithPrismaDocumentIDEqualsParam {
+	if value == nil {
+		return documentBlockWithPrismaDocumentIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r documentBlockQueryDocumentIDString) Order(direction SortOrder) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name:  "document_id",
+			Value: direction,
+		},
+	}
+}
+
+func (r documentBlockQueryDocumentIDString) Cursor(cursor string) documentBlockCursorParam {
+	return documentBlockCursorParam{
+		data: builder.Field{
+			Name:  "document_id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r documentBlockQueryDocumentIDString) In(value []string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "document_id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryDocumentIDString) InIfPresent(value []string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r documentBlockQueryDocumentIDString) NotIn(value []string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "document_id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryDocumentIDString) NotInIfPresent(value []string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r documentBlockQueryDocumentIDString) Lt(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "document_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryDocumentIDString) LtIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r documentBlockQueryDocumentIDString) Lte(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "document_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryDocumentIDString) LteIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r documentBlockQueryDocumentIDString) Gt(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "document_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryDocumentIDString) GtIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r documentBlockQueryDocumentIDString) Gte(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "document_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryDocumentIDString) GteIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r documentBlockQueryDocumentIDString) Contains(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "document_id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryDocumentIDString) ContainsIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r documentBlockQueryDocumentIDString) StartsWith(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "document_id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryDocumentIDString) StartsWithIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r documentBlockQueryDocumentIDString) EndsWith(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "document_id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryDocumentIDString) EndsWithIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r documentBlockQueryDocumentIDString) Mode(value QueryMode) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "document_id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryDocumentIDString) ModeIfPresent(value *QueryMode) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r documentBlockQueryDocumentIDString) Not(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "document_id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryDocumentIDString) NotIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r documentBlockQueryDocumentIDString) HasPrefix(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "document_id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r documentBlockQueryDocumentIDString) HasPrefixIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r documentBlockQueryDocumentIDString) HasSuffix(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "document_id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r documentBlockQueryDocumentIDString) HasSuffixIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r documentBlockQueryDocumentIDString) Field() documentBlockPrismaFields {
+	return documentBlockFieldDocumentID
+}
+
+// base struct
+type documentBlockQueryBlockBlock struct{}
+
+type documentBlockQueryBlockRelations struct{}
+
+// DocumentBlock -> Block
+//
+// @relation
+// @required
+func (documentBlockQueryBlockRelations) Where(
+	params ...BlockWhereParam,
+) documentBlockDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "block",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (documentBlockQueryBlockRelations) Fetch() documentBlockToBlockFindUnique {
+	var v documentBlockToBlockFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "block"
+	v.query.Outputs = blockOutput
+
+	return v
+}
+
+func (r documentBlockQueryBlockRelations) Link(
+	params BlockWhereParam,
+) documentBlockWithPrismaBlockSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return documentBlockWithPrismaBlockSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return documentBlockWithPrismaBlockSetParam{
+		data: builder.Field{
+			Name: "block",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryBlockRelations) Unlink() documentBlockWithPrismaBlockSetParam {
+	var v documentBlockWithPrismaBlockSetParam
+
+	v = documentBlockWithPrismaBlockSetParam{
+		data: builder.Field{
+			Name: "block",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r documentBlockQueryBlockBlock) Field() documentBlockPrismaFields {
+	return documentBlockFieldBlock
+}
+
+// base struct
+type documentBlockQueryBlockIDString struct{}
+
+// Set the required value of BlockID
+func (r documentBlockQueryBlockIDString) Set(value string) documentBlockSetParam {
+
+	return documentBlockSetParam{
+		data: builder.Field{
+			Name:  "block_id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of BlockID dynamically
+func (r documentBlockQueryBlockIDString) SetIfPresent(value *String) documentBlockSetParam {
+	if value == nil {
+		return documentBlockSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r documentBlockQueryBlockIDString) Equals(value string) documentBlockWithPrismaBlockIDEqualsParam {
+
+	return documentBlockWithPrismaBlockIDEqualsParam{
+		data: builder.Field{
+			Name: "block_id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryBlockIDString) EqualsIfPresent(value *string) documentBlockWithPrismaBlockIDEqualsParam {
+	if value == nil {
+		return documentBlockWithPrismaBlockIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r documentBlockQueryBlockIDString) Order(direction SortOrder) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name:  "block_id",
+			Value: direction,
+		},
+	}
+}
+
+func (r documentBlockQueryBlockIDString) Cursor(cursor string) documentBlockCursorParam {
+	return documentBlockCursorParam{
+		data: builder.Field{
+			Name:  "block_id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r documentBlockQueryBlockIDString) In(value []string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "block_id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryBlockIDString) InIfPresent(value []string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r documentBlockQueryBlockIDString) NotIn(value []string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "block_id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryBlockIDString) NotInIfPresent(value []string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r documentBlockQueryBlockIDString) Lt(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "block_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryBlockIDString) LtIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r documentBlockQueryBlockIDString) Lte(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "block_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryBlockIDString) LteIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r documentBlockQueryBlockIDString) Gt(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "block_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryBlockIDString) GtIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r documentBlockQueryBlockIDString) Gte(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "block_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryBlockIDString) GteIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r documentBlockQueryBlockIDString) Contains(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "block_id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryBlockIDString) ContainsIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r documentBlockQueryBlockIDString) StartsWith(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "block_id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryBlockIDString) StartsWithIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r documentBlockQueryBlockIDString) EndsWith(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "block_id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryBlockIDString) EndsWithIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r documentBlockQueryBlockIDString) Mode(value QueryMode) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "block_id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryBlockIDString) ModeIfPresent(value *QueryMode) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r documentBlockQueryBlockIDString) Not(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "block_id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryBlockIDString) NotIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r documentBlockQueryBlockIDString) HasPrefix(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "block_id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r documentBlockQueryBlockIDString) HasPrefixIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r documentBlockQueryBlockIDString) HasSuffix(value string) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "block_id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r documentBlockQueryBlockIDString) HasSuffixIfPresent(value *string) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r documentBlockQueryBlockIDString) Field() documentBlockPrismaFields {
+	return documentBlockFieldBlockID
+}
+
+// base struct
+type documentBlockQueryPositionInt struct{}
+
+// Set the required value of Position
+func (r documentBlockQueryPositionInt) Set(value int) documentBlockWithPrismaPositionSetParam {
+
+	return documentBlockWithPrismaPositionSetParam{
+		data: builder.Field{
+			Name:  "position",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Position dynamically
+func (r documentBlockQueryPositionInt) SetIfPresent(value *Int) documentBlockWithPrismaPositionSetParam {
+	if value == nil {
+		return documentBlockWithPrismaPositionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of Position
+func (r documentBlockQueryPositionInt) Increment(value int) documentBlockWithPrismaPositionSetParam {
+	return documentBlockWithPrismaPositionSetParam{
+		data: builder.Field{
+			Name: "position",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryPositionInt) IncrementIfPresent(value *int) documentBlockWithPrismaPositionSetParam {
+	if value == nil {
+		return documentBlockWithPrismaPositionSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of Position
+func (r documentBlockQueryPositionInt) Decrement(value int) documentBlockWithPrismaPositionSetParam {
+	return documentBlockWithPrismaPositionSetParam{
+		data: builder.Field{
+			Name: "position",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryPositionInt) DecrementIfPresent(value *int) documentBlockWithPrismaPositionSetParam {
+	if value == nil {
+		return documentBlockWithPrismaPositionSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of Position
+func (r documentBlockQueryPositionInt) Multiply(value int) documentBlockWithPrismaPositionSetParam {
+	return documentBlockWithPrismaPositionSetParam{
+		data: builder.Field{
+			Name: "position",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryPositionInt) MultiplyIfPresent(value *int) documentBlockWithPrismaPositionSetParam {
+	if value == nil {
+		return documentBlockWithPrismaPositionSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of Position
+func (r documentBlockQueryPositionInt) Divide(value int) documentBlockWithPrismaPositionSetParam {
+	return documentBlockWithPrismaPositionSetParam{
+		data: builder.Field{
+			Name: "position",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryPositionInt) DivideIfPresent(value *int) documentBlockWithPrismaPositionSetParam {
+	if value == nil {
+		return documentBlockWithPrismaPositionSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r documentBlockQueryPositionInt) Equals(value int) documentBlockWithPrismaPositionEqualsParam {
+
+	return documentBlockWithPrismaPositionEqualsParam{
+		data: builder.Field{
+			Name: "position",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryPositionInt) EqualsIfPresent(value *int) documentBlockWithPrismaPositionEqualsParam {
+	if value == nil {
+		return documentBlockWithPrismaPositionEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r documentBlockQueryPositionInt) Order(direction SortOrder) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name:  "position",
+			Value: direction,
+		},
+	}
+}
+
+func (r documentBlockQueryPositionInt) Cursor(cursor int) documentBlockCursorParam {
+	return documentBlockCursorParam{
+		data: builder.Field{
+			Name:  "position",
+			Value: cursor,
+		},
+	}
+}
+
+func (r documentBlockQueryPositionInt) In(value []int) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "position",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryPositionInt) InIfPresent(value []int) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r documentBlockQueryPositionInt) NotIn(value []int) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "position",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryPositionInt) NotInIfPresent(value []int) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r documentBlockQueryPositionInt) Lt(value int) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "position",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryPositionInt) LtIfPresent(value *int) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r documentBlockQueryPositionInt) Lte(value int) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "position",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryPositionInt) LteIfPresent(value *int) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r documentBlockQueryPositionInt) Gt(value int) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "position",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryPositionInt) GtIfPresent(value *int) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r documentBlockQueryPositionInt) Gte(value int) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "position",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryPositionInt) GteIfPresent(value *int) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r documentBlockQueryPositionInt) Not(value int) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "position",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r documentBlockQueryPositionInt) NotIfPresent(value *int) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r documentBlockQueryPositionInt) LT(value int) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "position",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r documentBlockQueryPositionInt) LTIfPresent(value *int) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.LT(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r documentBlockQueryPositionInt) LTE(value int) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "position",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r documentBlockQueryPositionInt) LTEIfPresent(value *int) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.LTE(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r documentBlockQueryPositionInt) GT(value int) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "position",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r documentBlockQueryPositionInt) GTIfPresent(value *int) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.GT(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r documentBlockQueryPositionInt) GTE(value int) documentBlockDefaultParam {
+	return documentBlockDefaultParam{
+		data: builder.Field{
+			Name: "position",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r documentBlockQueryPositionInt) GTEIfPresent(value *int) documentBlockDefaultParam {
+	if value == nil {
+		return documentBlockDefaultParam{}
+	}
+	return r.GTE(*value)
+}
+
+func (r documentBlockQueryPositionInt) Field() documentBlockPrismaFields {
+	return documentBlockFieldPosition
+}
+
+// Block acts as a namespaces to access query methods for the Block model
+var Block = blockQuery{}
+
+// blockQuery exposes query functions for the block model
+type blockQuery struct {
+
+	// ID
+	//
+	// @required
+	ID blockQueryIDString
+
+	Organization blockQueryOrganizationRelations
+
+	// OrganizationID
+	//
+	// @required
+	OrganizationID blockQueryOrganizationIDString
+
+	// Created
+	//
+	// @required
+	Created blockQueryCreatedDateTime
+
+	// Updated
+	//
+	// @required
+	Updated blockQueryUpdatedDateTime
+
+	// Type
+	//
+	// @required
+	Type blockQueryTypeString
+
+	// Content
+	//
+	// @required
+	Content blockQueryContentJson
+
+	Documents blockQueryDocumentsRelations
+}
+
+func (blockQuery) Not(params ...BlockWhereParam) blockDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return blockDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (blockQuery) Or(params ...BlockWhereParam) blockDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return blockDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (blockQuery) And(params ...BlockWhereParam) blockDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return blockDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+// base struct
+type blockQueryIDString struct{}
+
+// Set the required value of ID
+func (r blockQueryIDString) Set(value string) blockSetParam {
+
+	return blockSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r blockQueryIDString) SetIfPresent(value *String) blockSetParam {
+	if value == nil {
+		return blockSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r blockQueryIDString) Equals(value string) blockWithPrismaIDEqualsUniqueParam {
+
+	return blockWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryIDString) EqualsIfPresent(value *string) blockWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return blockWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r blockQueryIDString) Order(direction SortOrder) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r blockQueryIDString) Cursor(cursor string) blockCursorParam {
+	return blockCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r blockQueryIDString) In(value []string) blockParamUnique {
+	return blockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryIDString) InIfPresent(value []string) blockParamUnique {
+	if value == nil {
+		return blockParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r blockQueryIDString) NotIn(value []string) blockParamUnique {
+	return blockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryIDString) NotInIfPresent(value []string) blockParamUnique {
+	if value == nil {
+		return blockParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r blockQueryIDString) Lt(value string) blockParamUnique {
+	return blockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryIDString) LtIfPresent(value *string) blockParamUnique {
+	if value == nil {
+		return blockParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r blockQueryIDString) Lte(value string) blockParamUnique {
+	return blockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryIDString) LteIfPresent(value *string) blockParamUnique {
+	if value == nil {
+		return blockParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r blockQueryIDString) Gt(value string) blockParamUnique {
+	return blockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryIDString) GtIfPresent(value *string) blockParamUnique {
+	if value == nil {
+		return blockParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r blockQueryIDString) Gte(value string) blockParamUnique {
+	return blockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryIDString) GteIfPresent(value *string) blockParamUnique {
+	if value == nil {
+		return blockParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r blockQueryIDString) Contains(value string) blockParamUnique {
+	return blockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryIDString) ContainsIfPresent(value *string) blockParamUnique {
+	if value == nil {
+		return blockParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r blockQueryIDString) StartsWith(value string) blockParamUnique {
+	return blockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryIDString) StartsWithIfPresent(value *string) blockParamUnique {
+	if value == nil {
+		return blockParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r blockQueryIDString) EndsWith(value string) blockParamUnique {
+	return blockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryIDString) EndsWithIfPresent(value *string) blockParamUnique {
+	if value == nil {
+		return blockParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r blockQueryIDString) Mode(value QueryMode) blockParamUnique {
+	return blockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryIDString) ModeIfPresent(value *QueryMode) blockParamUnique {
+	if value == nil {
+		return blockParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r blockQueryIDString) Not(value string) blockParamUnique {
+	return blockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryIDString) NotIfPresent(value *string) blockParamUnique {
+	if value == nil {
+		return blockParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r blockQueryIDString) HasPrefix(value string) blockParamUnique {
+	return blockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r blockQueryIDString) HasPrefixIfPresent(value *string) blockParamUnique {
+	if value == nil {
+		return blockParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r blockQueryIDString) HasSuffix(value string) blockParamUnique {
+	return blockParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r blockQueryIDString) HasSuffixIfPresent(value *string) blockParamUnique {
+	if value == nil {
+		return blockParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r blockQueryIDString) Field() blockPrismaFields {
+	return blockFieldID
+}
+
+// base struct
+type blockQueryOrganizationOrganization struct{}
+
+type blockQueryOrganizationRelations struct{}
+
+// Block -> Organization
+//
+// @relation
+// @required
+func (blockQueryOrganizationRelations) Where(
+	params ...OrganizationWhereParam,
+) blockDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (blockQueryOrganizationRelations) Fetch() blockToOrganizationFindUnique {
+	var v blockToOrganizationFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "organization"
+	v.query.Outputs = organizationOutput
+
+	return v
+}
+
+func (r blockQueryOrganizationRelations) Link(
+	params OrganizationWhereParam,
+) blockWithPrismaOrganizationSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return blockWithPrismaOrganizationSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return blockWithPrismaOrganizationSetParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryOrganizationRelations) Unlink() blockWithPrismaOrganizationSetParam {
+	var v blockWithPrismaOrganizationSetParam
+
+	v = blockWithPrismaOrganizationSetParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r blockQueryOrganizationOrganization) Field() blockPrismaFields {
+	return blockFieldOrganization
+}
+
+// base struct
+type blockQueryOrganizationIDString struct{}
+
+// Set the required value of OrganizationID
+func (r blockQueryOrganizationIDString) Set(value string) blockSetParam {
+
+	return blockSetParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of OrganizationID dynamically
+func (r blockQueryOrganizationIDString) SetIfPresent(value *String) blockSetParam {
+	if value == nil {
+		return blockSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r blockQueryOrganizationIDString) Equals(value string) blockWithPrismaOrganizationIDEqualsParam {
+
+	return blockWithPrismaOrganizationIDEqualsParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryOrganizationIDString) EqualsIfPresent(value *string) blockWithPrismaOrganizationIDEqualsParam {
+	if value == nil {
+		return blockWithPrismaOrganizationIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r blockQueryOrganizationIDString) Order(direction SortOrder) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: direction,
+		},
+	}
+}
+
+func (r blockQueryOrganizationIDString) Cursor(cursor string) blockCursorParam {
+	return blockCursorParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r blockQueryOrganizationIDString) In(value []string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryOrganizationIDString) InIfPresent(value []string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r blockQueryOrganizationIDString) NotIn(value []string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryOrganizationIDString) NotInIfPresent(value []string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r blockQueryOrganizationIDString) Lt(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryOrganizationIDString) LtIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r blockQueryOrganizationIDString) Lte(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryOrganizationIDString) LteIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r blockQueryOrganizationIDString) Gt(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryOrganizationIDString) GtIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r blockQueryOrganizationIDString) Gte(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryOrganizationIDString) GteIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r blockQueryOrganizationIDString) Contains(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryOrganizationIDString) ContainsIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r blockQueryOrganizationIDString) StartsWith(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryOrganizationIDString) StartsWithIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r blockQueryOrganizationIDString) EndsWith(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryOrganizationIDString) EndsWithIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r blockQueryOrganizationIDString) Mode(value QueryMode) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryOrganizationIDString) ModeIfPresent(value *QueryMode) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r blockQueryOrganizationIDString) Not(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryOrganizationIDString) NotIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r blockQueryOrganizationIDString) HasPrefix(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r blockQueryOrganizationIDString) HasPrefixIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r blockQueryOrganizationIDString) HasSuffix(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r blockQueryOrganizationIDString) HasSuffixIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r blockQueryOrganizationIDString) Field() blockPrismaFields {
+	return blockFieldOrganizationID
+}
+
+// base struct
+type blockQueryCreatedDateTime struct{}
+
+// Set the required value of Created
+func (r blockQueryCreatedDateTime) Set(value DateTime) blockSetParam {
+
+	return blockSetParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Created dynamically
+func (r blockQueryCreatedDateTime) SetIfPresent(value *DateTime) blockSetParam {
+	if value == nil {
+		return blockSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r blockQueryCreatedDateTime) Equals(value DateTime) blockWithPrismaCreatedEqualsParam {
+
+	return blockWithPrismaCreatedEqualsParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryCreatedDateTime) EqualsIfPresent(value *DateTime) blockWithPrismaCreatedEqualsParam {
+	if value == nil {
+		return blockWithPrismaCreatedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r blockQueryCreatedDateTime) Order(direction SortOrder) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: direction,
+		},
+	}
+}
+
+func (r blockQueryCreatedDateTime) Cursor(cursor DateTime) blockCursorParam {
+	return blockCursorParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: cursor,
+		},
+	}
+}
+
+func (r blockQueryCreatedDateTime) In(value []DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryCreatedDateTime) InIfPresent(value []DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r blockQueryCreatedDateTime) NotIn(value []DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryCreatedDateTime) NotInIfPresent(value []DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r blockQueryCreatedDateTime) Lt(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryCreatedDateTime) LtIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r blockQueryCreatedDateTime) Lte(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryCreatedDateTime) LteIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r blockQueryCreatedDateTime) Gt(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryCreatedDateTime) GtIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r blockQueryCreatedDateTime) Gte(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryCreatedDateTime) GteIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r blockQueryCreatedDateTime) Not(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryCreatedDateTime) NotIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r blockQueryCreatedDateTime) Before(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r blockQueryCreatedDateTime) BeforeIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r blockQueryCreatedDateTime) After(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r blockQueryCreatedDateTime) AfterIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r blockQueryCreatedDateTime) BeforeEquals(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r blockQueryCreatedDateTime) BeforeEqualsIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r blockQueryCreatedDateTime) AfterEquals(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r blockQueryCreatedDateTime) AfterEqualsIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r blockQueryCreatedDateTime) Field() blockPrismaFields {
+	return blockFieldCreated
+}
+
+// base struct
+type blockQueryUpdatedDateTime struct{}
+
+// Set the required value of Updated
+func (r blockQueryUpdatedDateTime) Set(value DateTime) blockSetParam {
+
+	return blockSetParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Updated dynamically
+func (r blockQueryUpdatedDateTime) SetIfPresent(value *DateTime) blockSetParam {
+	if value == nil {
+		return blockSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r blockQueryUpdatedDateTime) Equals(value DateTime) blockWithPrismaUpdatedEqualsParam {
+
+	return blockWithPrismaUpdatedEqualsParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryUpdatedDateTime) EqualsIfPresent(value *DateTime) blockWithPrismaUpdatedEqualsParam {
+	if value == nil {
+		return blockWithPrismaUpdatedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r blockQueryUpdatedDateTime) Order(direction SortOrder) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: direction,
+		},
+	}
+}
+
+func (r blockQueryUpdatedDateTime) Cursor(cursor DateTime) blockCursorParam {
+	return blockCursorParam{
+		data: builder.Field{
+			Name:  "updated",
+			Value: cursor,
+		},
+	}
+}
+
+func (r blockQueryUpdatedDateTime) In(value []DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryUpdatedDateTime) InIfPresent(value []DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r blockQueryUpdatedDateTime) NotIn(value []DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryUpdatedDateTime) NotInIfPresent(value []DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r blockQueryUpdatedDateTime) Lt(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryUpdatedDateTime) LtIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r blockQueryUpdatedDateTime) Lte(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryUpdatedDateTime) LteIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r blockQueryUpdatedDateTime) Gt(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryUpdatedDateTime) GtIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r blockQueryUpdatedDateTime) Gte(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryUpdatedDateTime) GteIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r blockQueryUpdatedDateTime) Not(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryUpdatedDateTime) NotIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r blockQueryUpdatedDateTime) Before(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r blockQueryUpdatedDateTime) BeforeIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r blockQueryUpdatedDateTime) After(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r blockQueryUpdatedDateTime) AfterIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r blockQueryUpdatedDateTime) BeforeEquals(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r blockQueryUpdatedDateTime) BeforeEqualsIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r blockQueryUpdatedDateTime) AfterEquals(value DateTime) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "updated",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r blockQueryUpdatedDateTime) AfterEqualsIfPresent(value *DateTime) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r blockQueryUpdatedDateTime) Field() blockPrismaFields {
+	return blockFieldUpdated
+}
+
+// base struct
+type blockQueryTypeString struct{}
+
+// Set the required value of Type
+func (r blockQueryTypeString) Set(value string) blockWithPrismaTypeSetParam {
+
+	return blockWithPrismaTypeSetParam{
+		data: builder.Field{
+			Name:  "type",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Type dynamically
+func (r blockQueryTypeString) SetIfPresent(value *String) blockWithPrismaTypeSetParam {
+	if value == nil {
+		return blockWithPrismaTypeSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r blockQueryTypeString) Equals(value string) blockWithPrismaTypeEqualsParam {
+
+	return blockWithPrismaTypeEqualsParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryTypeString) EqualsIfPresent(value *string) blockWithPrismaTypeEqualsParam {
+	if value == nil {
+		return blockWithPrismaTypeEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r blockQueryTypeString) Order(direction SortOrder) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name:  "type",
+			Value: direction,
+		},
+	}
+}
+
+func (r blockQueryTypeString) Cursor(cursor string) blockCursorParam {
+	return blockCursorParam{
+		data: builder.Field{
+			Name:  "type",
+			Value: cursor,
+		},
+	}
+}
+
+func (r blockQueryTypeString) In(value []string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryTypeString) InIfPresent(value []string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r blockQueryTypeString) NotIn(value []string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryTypeString) NotInIfPresent(value []string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r blockQueryTypeString) Lt(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryTypeString) LtIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r blockQueryTypeString) Lte(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryTypeString) LteIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r blockQueryTypeString) Gt(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryTypeString) GtIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r blockQueryTypeString) Gte(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryTypeString) GteIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r blockQueryTypeString) Contains(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryTypeString) ContainsIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r blockQueryTypeString) StartsWith(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryTypeString) StartsWithIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r blockQueryTypeString) EndsWith(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryTypeString) EndsWithIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r blockQueryTypeString) Mode(value QueryMode) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryTypeString) ModeIfPresent(value *QueryMode) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r blockQueryTypeString) Not(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryTypeString) NotIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r blockQueryTypeString) HasPrefix(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r blockQueryTypeString) HasPrefixIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r blockQueryTypeString) HasSuffix(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r blockQueryTypeString) HasSuffixIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r blockQueryTypeString) Field() blockPrismaFields {
+	return blockFieldType
+}
+
+// base struct
+type blockQueryContentJson struct{}
+
+// Set the required value of Content
+func (r blockQueryContentJson) Set(value JSON) blockWithPrismaContentSetParam {
+
+	return blockWithPrismaContentSetParam{
+		data: builder.Field{
+			Name:  "content",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Content dynamically
+func (r blockQueryContentJson) SetIfPresent(value *JSON) blockWithPrismaContentSetParam {
+	if value == nil {
+		return blockWithPrismaContentSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r blockQueryContentJson) Equals(value JSON) blockWithPrismaContentEqualsParam {
+
+	return blockWithPrismaContentEqualsParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryContentJson) EqualsIfPresent(value *JSON) blockWithPrismaContentEqualsParam {
+	if value == nil {
+		return blockWithPrismaContentEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r blockQueryContentJson) Order(direction SortOrder) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name:  "content",
+			Value: direction,
+		},
+	}
+}
+
+func (r blockQueryContentJson) Cursor(cursor JSON) blockCursorParam {
+	return blockCursorParam{
+		data: builder.Field{
+			Name:  "content",
+			Value: cursor,
+		},
+	}
+}
+
+func (r blockQueryContentJson) Path(value []string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "path",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryContentJson) PathIfPresent(value []string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Path(value)
+}
+
+func (r blockQueryContentJson) StringContains(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "string_contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryContentJson) StringContainsIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.StringContains(*value)
+}
+
+func (r blockQueryContentJson) StringStartsWith(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "string_starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryContentJson) StringStartsWithIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.StringStartsWith(*value)
+}
+
+func (r blockQueryContentJson) StringEndsWith(value string) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "string_ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryContentJson) StringEndsWithIfPresent(value *string) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.StringEndsWith(*value)
+}
+
+func (r blockQueryContentJson) ArrayContains(value JSON) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "array_contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryContentJson) ArrayContainsIfPresent(value *JSON) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.ArrayContains(*value)
+}
+
+func (r blockQueryContentJson) ArrayStartsWith(value JSON) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "array_starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryContentJson) ArrayStartsWithIfPresent(value *JSON) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.ArrayStartsWith(*value)
+}
+
+func (r blockQueryContentJson) ArrayEndsWith(value JSON) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "array_ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryContentJson) ArrayEndsWithIfPresent(value *JSON) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.ArrayEndsWith(*value)
+}
+
+func (r blockQueryContentJson) Lt(value JSON) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryContentJson) LtIfPresent(value *JSON) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r blockQueryContentJson) Lte(value JSON) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryContentJson) LteIfPresent(value *JSON) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r blockQueryContentJson) Gt(value JSON) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryContentJson) GtIfPresent(value *JSON) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r blockQueryContentJson) Gte(value JSON) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryContentJson) GteIfPresent(value *JSON) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r blockQueryContentJson) Not(value JSONNullValueFilter) blockDefaultParam {
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryContentJson) NotIfPresent(value *JSONNullValueFilter) blockDefaultParam {
+	if value == nil {
+		return blockDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r blockQueryContentJson) Field() blockPrismaFields {
+	return blockFieldContent
+}
+
+// base struct
+type blockQueryDocumentsDocumentBlock struct{}
+
+type blockQueryDocumentsRelations struct{}
+
+// Block -> Documents
+//
+// @relation
+// @required
+func (blockQueryDocumentsRelations) Some(
+	params ...DocumentBlockWhereParam,
+) blockDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "documents",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Block -> Documents
+//
+// @relation
+// @required
+func (blockQueryDocumentsRelations) Every(
+	params ...DocumentBlockWhereParam,
+) blockDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "documents",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Block -> Documents
+//
+// @relation
+// @required
+func (blockQueryDocumentsRelations) None(
+	params ...DocumentBlockWhereParam,
+) blockDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return blockDefaultParam{
+		data: builder.Field{
+			Name: "documents",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (blockQueryDocumentsRelations) Fetch(
+
+	params ...DocumentBlockWhereParam,
+
+) blockToDocumentsFindMany {
+	var v blockToDocumentsFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "documents"
+	v.query.Outputs = documentBlockOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r blockQueryDocumentsRelations) Link(
+	params ...DocumentBlockWhereParam,
+) blockSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return blockSetParam{
+		data: builder.Field{
+			Name: "documents",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r blockQueryDocumentsRelations) Unlink(
+	params ...DocumentBlockWhereParam,
+) blockSetParam {
+	var v blockSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = blockSetParam{
+		data: builder.Field{
+			Name: "documents",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r blockQueryDocumentsDocumentBlock) Field() blockPrismaFields {
+	return blockFieldDocuments
+}
+
 // --- template actions.gotpl ---
 var countOutput = []builder.Output{
 	{Name: "count"},
@@ -17794,6 +33690,396 @@ func (p organizationWithPrismaUsersEqualsUniqueParam) usersField()        {}
 func (organizationWithPrismaUsersEqualsUniqueParam) unique() {}
 func (organizationWithPrismaUsersEqualsUniqueParam) equals() {}
 
+type OrganizationWithPrismaComponentsEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	organizationModel()
+	componentsField()
+}
+
+type OrganizationWithPrismaComponentsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	organizationModel()
+	componentsField()
+}
+
+type organizationWithPrismaComponentsSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaComponentsSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaComponentsSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaComponentsSetParam) organizationModel() {}
+
+func (p organizationWithPrismaComponentsSetParam) componentsField() {}
+
+type OrganizationWithPrismaComponentsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	organizationModel()
+	componentsField()
+}
+
+type organizationWithPrismaComponentsEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaComponentsEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaComponentsEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaComponentsEqualsParam) organizationModel() {}
+
+func (p organizationWithPrismaComponentsEqualsParam) componentsField() {}
+
+func (organizationWithPrismaComponentsSetParam) settable()  {}
+func (organizationWithPrismaComponentsEqualsParam) equals() {}
+
+type organizationWithPrismaComponentsEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaComponentsEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaComponentsEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaComponentsEqualsUniqueParam) organizationModel() {}
+func (p organizationWithPrismaComponentsEqualsUniqueParam) componentsField()   {}
+
+func (organizationWithPrismaComponentsEqualsUniqueParam) unique() {}
+func (organizationWithPrismaComponentsEqualsUniqueParam) equals() {}
+
+type OrganizationWithPrismaTagsEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	organizationModel()
+	tagsField()
+}
+
+type OrganizationWithPrismaTagsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	organizationModel()
+	tagsField()
+}
+
+type organizationWithPrismaTagsSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaTagsSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaTagsSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaTagsSetParam) organizationModel() {}
+
+func (p organizationWithPrismaTagsSetParam) tagsField() {}
+
+type OrganizationWithPrismaTagsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	organizationModel()
+	tagsField()
+}
+
+type organizationWithPrismaTagsEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaTagsEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaTagsEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaTagsEqualsParam) organizationModel() {}
+
+func (p organizationWithPrismaTagsEqualsParam) tagsField() {}
+
+func (organizationWithPrismaTagsSetParam) settable()  {}
+func (organizationWithPrismaTagsEqualsParam) equals() {}
+
+type organizationWithPrismaTagsEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaTagsEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaTagsEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaTagsEqualsUniqueParam) organizationModel() {}
+func (p organizationWithPrismaTagsEqualsUniqueParam) tagsField()         {}
+
+func (organizationWithPrismaTagsEqualsUniqueParam) unique() {}
+func (organizationWithPrismaTagsEqualsUniqueParam) equals() {}
+
+type OrganizationWithPrismaDocumentsEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	organizationModel()
+	documentsField()
+}
+
+type OrganizationWithPrismaDocumentsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	organizationModel()
+	documentsField()
+}
+
+type organizationWithPrismaDocumentsSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaDocumentsSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaDocumentsSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaDocumentsSetParam) organizationModel() {}
+
+func (p organizationWithPrismaDocumentsSetParam) documentsField() {}
+
+type OrganizationWithPrismaDocumentsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	organizationModel()
+	documentsField()
+}
+
+type organizationWithPrismaDocumentsEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaDocumentsEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaDocumentsEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaDocumentsEqualsParam) organizationModel() {}
+
+func (p organizationWithPrismaDocumentsEqualsParam) documentsField() {}
+
+func (organizationWithPrismaDocumentsSetParam) settable()  {}
+func (organizationWithPrismaDocumentsEqualsParam) equals() {}
+
+type organizationWithPrismaDocumentsEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaDocumentsEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaDocumentsEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaDocumentsEqualsUniqueParam) organizationModel() {}
+func (p organizationWithPrismaDocumentsEqualsUniqueParam) documentsField()    {}
+
+func (organizationWithPrismaDocumentsEqualsUniqueParam) unique() {}
+func (organizationWithPrismaDocumentsEqualsUniqueParam) equals() {}
+
+type OrganizationWithPrismaBlockEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	organizationModel()
+	blockField()
+}
+
+type OrganizationWithPrismaBlockSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	organizationModel()
+	blockField()
+}
+
+type organizationWithPrismaBlockSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaBlockSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaBlockSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaBlockSetParam) organizationModel() {}
+
+func (p organizationWithPrismaBlockSetParam) blockField() {}
+
+type OrganizationWithPrismaBlockWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	organizationModel()
+	blockField()
+}
+
+type organizationWithPrismaBlockEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaBlockEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaBlockEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaBlockEqualsParam) organizationModel() {}
+
+func (p organizationWithPrismaBlockEqualsParam) blockField() {}
+
+func (organizationWithPrismaBlockSetParam) settable()  {}
+func (organizationWithPrismaBlockEqualsParam) equals() {}
+
+type organizationWithPrismaBlockEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaBlockEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaBlockEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaBlockEqualsUniqueParam) organizationModel() {}
+func (p organizationWithPrismaBlockEqualsUniqueParam) blockField()        {}
+
+func (organizationWithPrismaBlockEqualsUniqueParam) unique() {}
+func (organizationWithPrismaBlockEqualsUniqueParam) equals() {}
+
+type OrganizationWithPrismaSessionsEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	organizationModel()
+	sessionsField()
+}
+
+type OrganizationWithPrismaSessionsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	organizationModel()
+	sessionsField()
+}
+
+type organizationWithPrismaSessionsSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaSessionsSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaSessionsSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaSessionsSetParam) organizationModel() {}
+
+func (p organizationWithPrismaSessionsSetParam) sessionsField() {}
+
+type OrganizationWithPrismaSessionsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	organizationModel()
+	sessionsField()
+}
+
+type organizationWithPrismaSessionsEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaSessionsEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaSessionsEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaSessionsEqualsParam) organizationModel() {}
+
+func (p organizationWithPrismaSessionsEqualsParam) sessionsField() {}
+
+func (organizationWithPrismaSessionsSetParam) settable()  {}
+func (organizationWithPrismaSessionsEqualsParam) equals() {}
+
+type organizationWithPrismaSessionsEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaSessionsEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaSessionsEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaSessionsEqualsUniqueParam) organizationModel() {}
+func (p organizationWithPrismaSessionsEqualsUniqueParam) sessionsField()     {}
+
+func (organizationWithPrismaSessionsEqualsUniqueParam) unique() {}
+func (organizationWithPrismaSessionsEqualsUniqueParam) equals() {}
+
 type userActions struct {
 	// client holds the prisma client
 	client *PrismaClient
@@ -17801,12 +34087,12 @@ type userActions struct {
 
 var userOutput = []builder.Output{
 	{Name: "id"},
+	{Name: "organization_id"},
 	{Name: "email"},
 	{Name: "password"},
 	{Name: "status"},
 	{Name: "created"},
 	{Name: "updated"},
-	{Name: "organization_id"},
 }
 
 type UserRelationWith interface {
@@ -18050,6 +34336,162 @@ func (p userWithPrismaIDEqualsUniqueParam) idField()   {}
 
 func (userWithPrismaIDEqualsUniqueParam) unique() {}
 func (userWithPrismaIDEqualsUniqueParam) equals() {}
+
+type UserWithPrismaOrganizationEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	userModel()
+	organizationField()
+}
+
+type UserWithPrismaOrganizationSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	userModel()
+	organizationField()
+}
+
+type userWithPrismaOrganizationSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p userWithPrismaOrganizationSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p userWithPrismaOrganizationSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p userWithPrismaOrganizationSetParam) userModel() {}
+
+func (p userWithPrismaOrganizationSetParam) organizationField() {}
+
+type UserWithPrismaOrganizationWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	userModel()
+	organizationField()
+}
+
+type userWithPrismaOrganizationEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p userWithPrismaOrganizationEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p userWithPrismaOrganizationEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p userWithPrismaOrganizationEqualsParam) userModel() {}
+
+func (p userWithPrismaOrganizationEqualsParam) organizationField() {}
+
+func (userWithPrismaOrganizationSetParam) settable()  {}
+func (userWithPrismaOrganizationEqualsParam) equals() {}
+
+type userWithPrismaOrganizationEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p userWithPrismaOrganizationEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p userWithPrismaOrganizationEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p userWithPrismaOrganizationEqualsUniqueParam) userModel()         {}
+func (p userWithPrismaOrganizationEqualsUniqueParam) organizationField() {}
+
+func (userWithPrismaOrganizationEqualsUniqueParam) unique() {}
+func (userWithPrismaOrganizationEqualsUniqueParam) equals() {}
+
+type UserWithPrismaOrganizationIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	userModel()
+	organizationIDField()
+}
+
+type UserWithPrismaOrganizationIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	userModel()
+	organizationIDField()
+}
+
+type userWithPrismaOrganizationIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p userWithPrismaOrganizationIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p userWithPrismaOrganizationIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p userWithPrismaOrganizationIDSetParam) userModel() {}
+
+func (p userWithPrismaOrganizationIDSetParam) organizationIDField() {}
+
+type UserWithPrismaOrganizationIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	userModel()
+	organizationIDField()
+}
+
+type userWithPrismaOrganizationIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p userWithPrismaOrganizationIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p userWithPrismaOrganizationIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p userWithPrismaOrganizationIDEqualsParam) userModel() {}
+
+func (p userWithPrismaOrganizationIDEqualsParam) organizationIDField() {}
+
+func (userWithPrismaOrganizationIDSetParam) settable()  {}
+func (userWithPrismaOrganizationIDEqualsParam) equals() {}
+
+type userWithPrismaOrganizationIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p userWithPrismaOrganizationIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p userWithPrismaOrganizationIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p userWithPrismaOrganizationIDEqualsUniqueParam) userModel()           {}
+func (p userWithPrismaOrganizationIDEqualsUniqueParam) organizationIDField() {}
+
+func (userWithPrismaOrganizationIDEqualsUniqueParam) unique() {}
+func (userWithPrismaOrganizationIDEqualsUniqueParam) equals() {}
 
 type UserWithPrismaEmailEqualsSetParam interface {
 	field() builder.Field
@@ -18441,162 +34883,6 @@ func (p userWithPrismaUpdatedEqualsUniqueParam) updatedField() {}
 func (userWithPrismaUpdatedEqualsUniqueParam) unique() {}
 func (userWithPrismaUpdatedEqualsUniqueParam) equals() {}
 
-type UserWithPrismaOrganizationEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	userModel()
-	organizationField()
-}
-
-type UserWithPrismaOrganizationSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	userModel()
-	organizationField()
-}
-
-type userWithPrismaOrganizationSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p userWithPrismaOrganizationSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p userWithPrismaOrganizationSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p userWithPrismaOrganizationSetParam) userModel() {}
-
-func (p userWithPrismaOrganizationSetParam) organizationField() {}
-
-type UserWithPrismaOrganizationWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	userModel()
-	organizationField()
-}
-
-type userWithPrismaOrganizationEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p userWithPrismaOrganizationEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p userWithPrismaOrganizationEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p userWithPrismaOrganizationEqualsParam) userModel() {}
-
-func (p userWithPrismaOrganizationEqualsParam) organizationField() {}
-
-func (userWithPrismaOrganizationSetParam) settable()  {}
-func (userWithPrismaOrganizationEqualsParam) equals() {}
-
-type userWithPrismaOrganizationEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p userWithPrismaOrganizationEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p userWithPrismaOrganizationEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p userWithPrismaOrganizationEqualsUniqueParam) userModel()         {}
-func (p userWithPrismaOrganizationEqualsUniqueParam) organizationField() {}
-
-func (userWithPrismaOrganizationEqualsUniqueParam) unique() {}
-func (userWithPrismaOrganizationEqualsUniqueParam) equals() {}
-
-type UserWithPrismaOrganizationIDEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	userModel()
-	organizationIDField()
-}
-
-type UserWithPrismaOrganizationIDSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	userModel()
-	organizationIDField()
-}
-
-type userWithPrismaOrganizationIDSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p userWithPrismaOrganizationIDSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p userWithPrismaOrganizationIDSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p userWithPrismaOrganizationIDSetParam) userModel() {}
-
-func (p userWithPrismaOrganizationIDSetParam) organizationIDField() {}
-
-type UserWithPrismaOrganizationIDWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	userModel()
-	organizationIDField()
-}
-
-type userWithPrismaOrganizationIDEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p userWithPrismaOrganizationIDEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p userWithPrismaOrganizationIDEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p userWithPrismaOrganizationIDEqualsParam) userModel() {}
-
-func (p userWithPrismaOrganizationIDEqualsParam) organizationIDField() {}
-
-func (userWithPrismaOrganizationIDSetParam) settable()  {}
-func (userWithPrismaOrganizationIDEqualsParam) equals() {}
-
-type userWithPrismaOrganizationIDEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p userWithPrismaOrganizationIDEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p userWithPrismaOrganizationIDEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p userWithPrismaOrganizationIDEqualsUniqueParam) userModel()           {}
-func (p userWithPrismaOrganizationIDEqualsUniqueParam) organizationIDField() {}
-
-func (userWithPrismaOrganizationIDEqualsUniqueParam) unique() {}
-func (userWithPrismaOrganizationIDEqualsUniqueParam) equals() {}
-
 type UserWithPrismaRolesEqualsSetParam interface {
 	field() builder.Field
 	getQuery() builder.Query
@@ -18760,6 +35046,7 @@ type sessionActions struct {
 
 var sessionOutput = []builder.Output{
 	{Name: "id"},
+	{Name: "organization_id"},
 	{Name: "created"},
 	{Name: "updated"},
 	{Name: "status"},
@@ -19007,6 +35294,162 @@ func (p sessionWithPrismaIDEqualsUniqueParam) idField()      {}
 
 func (sessionWithPrismaIDEqualsUniqueParam) unique() {}
 func (sessionWithPrismaIDEqualsUniqueParam) equals() {}
+
+type SessionWithPrismaOrganizationEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	sessionModel()
+	organizationField()
+}
+
+type SessionWithPrismaOrganizationSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	sessionModel()
+	organizationField()
+}
+
+type sessionWithPrismaOrganizationSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p sessionWithPrismaOrganizationSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p sessionWithPrismaOrganizationSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p sessionWithPrismaOrganizationSetParam) sessionModel() {}
+
+func (p sessionWithPrismaOrganizationSetParam) organizationField() {}
+
+type SessionWithPrismaOrganizationWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	sessionModel()
+	organizationField()
+}
+
+type sessionWithPrismaOrganizationEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p sessionWithPrismaOrganizationEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p sessionWithPrismaOrganizationEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p sessionWithPrismaOrganizationEqualsParam) sessionModel() {}
+
+func (p sessionWithPrismaOrganizationEqualsParam) organizationField() {}
+
+func (sessionWithPrismaOrganizationSetParam) settable()  {}
+func (sessionWithPrismaOrganizationEqualsParam) equals() {}
+
+type sessionWithPrismaOrganizationEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p sessionWithPrismaOrganizationEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p sessionWithPrismaOrganizationEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p sessionWithPrismaOrganizationEqualsUniqueParam) sessionModel()      {}
+func (p sessionWithPrismaOrganizationEqualsUniqueParam) organizationField() {}
+
+func (sessionWithPrismaOrganizationEqualsUniqueParam) unique() {}
+func (sessionWithPrismaOrganizationEqualsUniqueParam) equals() {}
+
+type SessionWithPrismaOrganizationIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	sessionModel()
+	organizationIDField()
+}
+
+type SessionWithPrismaOrganizationIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	sessionModel()
+	organizationIDField()
+}
+
+type sessionWithPrismaOrganizationIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p sessionWithPrismaOrganizationIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p sessionWithPrismaOrganizationIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p sessionWithPrismaOrganizationIDSetParam) sessionModel() {}
+
+func (p sessionWithPrismaOrganizationIDSetParam) organizationIDField() {}
+
+type SessionWithPrismaOrganizationIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	sessionModel()
+	organizationIDField()
+}
+
+type sessionWithPrismaOrganizationIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p sessionWithPrismaOrganizationIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p sessionWithPrismaOrganizationIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p sessionWithPrismaOrganizationIDEqualsParam) sessionModel() {}
+
+func (p sessionWithPrismaOrganizationIDEqualsParam) organizationIDField() {}
+
+func (sessionWithPrismaOrganizationIDSetParam) settable()  {}
+func (sessionWithPrismaOrganizationIDEqualsParam) equals() {}
+
+type sessionWithPrismaOrganizationIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p sessionWithPrismaOrganizationIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p sessionWithPrismaOrganizationIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p sessionWithPrismaOrganizationIDEqualsUniqueParam) sessionModel()        {}
+func (p sessionWithPrismaOrganizationIDEqualsUniqueParam) organizationIDField() {}
+
+func (sessionWithPrismaOrganizationIDEqualsUniqueParam) unique() {}
+func (sessionWithPrismaOrganizationIDEqualsUniqueParam) equals() {}
 
 type SessionWithPrismaCreatedEqualsSetParam interface {
 	field() builder.Field
@@ -22779,6 +39222,4739 @@ func (p userRoleWithPrismaRoleIDEqualsUniqueParam) roleIDField()   {}
 func (userRoleWithPrismaRoleIDEqualsUniqueParam) unique() {}
 func (userRoleWithPrismaRoleIDEqualsUniqueParam) equals() {}
 
+type componentActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var componentOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "organization_id"},
+	{Name: "created"},
+	{Name: "updated"},
+	{Name: "name"},
+	{Name: "type"},
+	{Name: "provider"},
+}
+
+type ComponentRelationWith interface {
+	getQuery() builder.Query
+	with()
+	componentRelation()
+}
+
+type ComponentWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+}
+
+type componentDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentDefaultParam) componentModel() {}
+
+type ComponentOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+}
+
+type componentOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentOrderByParam) componentModel() {}
+
+type ComponentCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	isCursor()
+}
+
+type componentCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentCursorParam) isCursor() {}
+
+func (p componentCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentCursorParam) componentModel() {}
+
+type ComponentParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	componentModel()
+}
+
+type componentParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentParamUnique) componentModel() {}
+
+func (componentParamUnique) unique() {}
+
+func (p componentParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p componentParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type ComponentEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentModel()
+}
+
+type componentEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentEqualsParam) componentModel() {}
+
+func (componentEqualsParam) equals() {}
+
+func (p componentEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type ComponentEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	componentModel()
+}
+
+type componentEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentEqualsUniqueParam) componentModel() {}
+
+func (componentEqualsUniqueParam) unique() {}
+func (componentEqualsUniqueParam) equals() {}
+
+func (p componentEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type ComponentSetParam interface {
+	field() builder.Field
+	settable()
+	componentModel()
+}
+
+type componentSetParam struct {
+	data builder.Field
+}
+
+func (componentSetParam) settable() {}
+
+func (p componentSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentSetParam) componentModel() {}
+
+type ComponentWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentModel()
+	idField()
+}
+
+type ComponentWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	idField()
+}
+
+type componentWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaIDSetParam) componentModel() {}
+
+func (p componentWithPrismaIDSetParam) idField() {}
+
+type ComponentWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	idField()
+}
+
+type componentWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaIDEqualsParam) componentModel() {}
+
+func (p componentWithPrismaIDEqualsParam) idField() {}
+
+func (componentWithPrismaIDSetParam) settable()  {}
+func (componentWithPrismaIDEqualsParam) equals() {}
+
+type componentWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaIDEqualsUniqueParam) componentModel() {}
+func (p componentWithPrismaIDEqualsUniqueParam) idField()        {}
+
+func (componentWithPrismaIDEqualsUniqueParam) unique() {}
+func (componentWithPrismaIDEqualsUniqueParam) equals() {}
+
+type ComponentWithPrismaOrganizationEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentModel()
+	organizationField()
+}
+
+type ComponentWithPrismaOrganizationSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	organizationField()
+}
+
+type componentWithPrismaOrganizationSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaOrganizationSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaOrganizationSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaOrganizationSetParam) componentModel() {}
+
+func (p componentWithPrismaOrganizationSetParam) organizationField() {}
+
+type ComponentWithPrismaOrganizationWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	organizationField()
+}
+
+type componentWithPrismaOrganizationEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaOrganizationEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaOrganizationEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaOrganizationEqualsParam) componentModel() {}
+
+func (p componentWithPrismaOrganizationEqualsParam) organizationField() {}
+
+func (componentWithPrismaOrganizationSetParam) settable()  {}
+func (componentWithPrismaOrganizationEqualsParam) equals() {}
+
+type componentWithPrismaOrganizationEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaOrganizationEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaOrganizationEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaOrganizationEqualsUniqueParam) componentModel()    {}
+func (p componentWithPrismaOrganizationEqualsUniqueParam) organizationField() {}
+
+func (componentWithPrismaOrganizationEqualsUniqueParam) unique() {}
+func (componentWithPrismaOrganizationEqualsUniqueParam) equals() {}
+
+type ComponentWithPrismaOrganizationIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentModel()
+	organizationIDField()
+}
+
+type ComponentWithPrismaOrganizationIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	organizationIDField()
+}
+
+type componentWithPrismaOrganizationIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaOrganizationIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaOrganizationIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaOrganizationIDSetParam) componentModel() {}
+
+func (p componentWithPrismaOrganizationIDSetParam) organizationIDField() {}
+
+type ComponentWithPrismaOrganizationIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	organizationIDField()
+}
+
+type componentWithPrismaOrganizationIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaOrganizationIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaOrganizationIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaOrganizationIDEqualsParam) componentModel() {}
+
+func (p componentWithPrismaOrganizationIDEqualsParam) organizationIDField() {}
+
+func (componentWithPrismaOrganizationIDSetParam) settable()  {}
+func (componentWithPrismaOrganizationIDEqualsParam) equals() {}
+
+type componentWithPrismaOrganizationIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaOrganizationIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaOrganizationIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaOrganizationIDEqualsUniqueParam) componentModel()      {}
+func (p componentWithPrismaOrganizationIDEqualsUniqueParam) organizationIDField() {}
+
+func (componentWithPrismaOrganizationIDEqualsUniqueParam) unique() {}
+func (componentWithPrismaOrganizationIDEqualsUniqueParam) equals() {}
+
+type ComponentWithPrismaCreatedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentModel()
+	createdField()
+}
+
+type ComponentWithPrismaCreatedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	createdField()
+}
+
+type componentWithPrismaCreatedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaCreatedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaCreatedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaCreatedSetParam) componentModel() {}
+
+func (p componentWithPrismaCreatedSetParam) createdField() {}
+
+type ComponentWithPrismaCreatedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	createdField()
+}
+
+type componentWithPrismaCreatedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaCreatedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaCreatedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaCreatedEqualsParam) componentModel() {}
+
+func (p componentWithPrismaCreatedEqualsParam) createdField() {}
+
+func (componentWithPrismaCreatedSetParam) settable()  {}
+func (componentWithPrismaCreatedEqualsParam) equals() {}
+
+type componentWithPrismaCreatedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaCreatedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaCreatedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaCreatedEqualsUniqueParam) componentModel() {}
+func (p componentWithPrismaCreatedEqualsUniqueParam) createdField()   {}
+
+func (componentWithPrismaCreatedEqualsUniqueParam) unique() {}
+func (componentWithPrismaCreatedEqualsUniqueParam) equals() {}
+
+type ComponentWithPrismaUpdatedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentModel()
+	updatedField()
+}
+
+type ComponentWithPrismaUpdatedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	updatedField()
+}
+
+type componentWithPrismaUpdatedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaUpdatedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaUpdatedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaUpdatedSetParam) componentModel() {}
+
+func (p componentWithPrismaUpdatedSetParam) updatedField() {}
+
+type ComponentWithPrismaUpdatedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	updatedField()
+}
+
+type componentWithPrismaUpdatedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaUpdatedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaUpdatedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaUpdatedEqualsParam) componentModel() {}
+
+func (p componentWithPrismaUpdatedEqualsParam) updatedField() {}
+
+func (componentWithPrismaUpdatedSetParam) settable()  {}
+func (componentWithPrismaUpdatedEqualsParam) equals() {}
+
+type componentWithPrismaUpdatedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaUpdatedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaUpdatedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaUpdatedEqualsUniqueParam) componentModel() {}
+func (p componentWithPrismaUpdatedEqualsUniqueParam) updatedField()   {}
+
+func (componentWithPrismaUpdatedEqualsUniqueParam) unique() {}
+func (componentWithPrismaUpdatedEqualsUniqueParam) equals() {}
+
+type ComponentWithPrismaNameEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentModel()
+	nameField()
+}
+
+type ComponentWithPrismaNameSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	nameField()
+}
+
+type componentWithPrismaNameSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaNameSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaNameSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaNameSetParam) componentModel() {}
+
+func (p componentWithPrismaNameSetParam) nameField() {}
+
+type ComponentWithPrismaNameWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	nameField()
+}
+
+type componentWithPrismaNameEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaNameEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaNameEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaNameEqualsParam) componentModel() {}
+
+func (p componentWithPrismaNameEqualsParam) nameField() {}
+
+func (componentWithPrismaNameSetParam) settable()  {}
+func (componentWithPrismaNameEqualsParam) equals() {}
+
+type componentWithPrismaNameEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaNameEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaNameEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaNameEqualsUniqueParam) componentModel() {}
+func (p componentWithPrismaNameEqualsUniqueParam) nameField()      {}
+
+func (componentWithPrismaNameEqualsUniqueParam) unique() {}
+func (componentWithPrismaNameEqualsUniqueParam) equals() {}
+
+type ComponentWithPrismaTypeEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentModel()
+	typeField()
+}
+
+type ComponentWithPrismaTypeSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	typeField()
+}
+
+type componentWithPrismaTypeSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaTypeSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaTypeSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaTypeSetParam) componentModel() {}
+
+func (p componentWithPrismaTypeSetParam) typeField() {}
+
+type ComponentWithPrismaTypeWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	typeField()
+}
+
+type componentWithPrismaTypeEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaTypeEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaTypeEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaTypeEqualsParam) componentModel() {}
+
+func (p componentWithPrismaTypeEqualsParam) typeField() {}
+
+func (componentWithPrismaTypeSetParam) settable()  {}
+func (componentWithPrismaTypeEqualsParam) equals() {}
+
+type componentWithPrismaTypeEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaTypeEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaTypeEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaTypeEqualsUniqueParam) componentModel() {}
+func (p componentWithPrismaTypeEqualsUniqueParam) typeField()      {}
+
+func (componentWithPrismaTypeEqualsUniqueParam) unique() {}
+func (componentWithPrismaTypeEqualsUniqueParam) equals() {}
+
+type ComponentWithPrismaProviderEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentModel()
+	providerField()
+}
+
+type ComponentWithPrismaProviderSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	providerField()
+}
+
+type componentWithPrismaProviderSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaProviderSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaProviderSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaProviderSetParam) componentModel() {}
+
+func (p componentWithPrismaProviderSetParam) providerField() {}
+
+type ComponentWithPrismaProviderWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	providerField()
+}
+
+type componentWithPrismaProviderEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaProviderEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaProviderEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaProviderEqualsParam) componentModel() {}
+
+func (p componentWithPrismaProviderEqualsParam) providerField() {}
+
+func (componentWithPrismaProviderSetParam) settable()  {}
+func (componentWithPrismaProviderEqualsParam) equals() {}
+
+type componentWithPrismaProviderEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaProviderEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaProviderEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaProviderEqualsUniqueParam) componentModel() {}
+func (p componentWithPrismaProviderEqualsUniqueParam) providerField()  {}
+
+func (componentWithPrismaProviderEqualsUniqueParam) unique() {}
+func (componentWithPrismaProviderEqualsUniqueParam) equals() {}
+
+type ComponentWithPrismaTagsEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentModel()
+	tagsField()
+}
+
+type ComponentWithPrismaTagsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	tagsField()
+}
+
+type componentWithPrismaTagsSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaTagsSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaTagsSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaTagsSetParam) componentModel() {}
+
+func (p componentWithPrismaTagsSetParam) tagsField() {}
+
+type ComponentWithPrismaTagsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	tagsField()
+}
+
+type componentWithPrismaTagsEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaTagsEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaTagsEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaTagsEqualsParam) componentModel() {}
+
+func (p componentWithPrismaTagsEqualsParam) tagsField() {}
+
+func (componentWithPrismaTagsSetParam) settable()  {}
+func (componentWithPrismaTagsEqualsParam) equals() {}
+
+type componentWithPrismaTagsEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaTagsEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaTagsEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaTagsEqualsUniqueParam) componentModel() {}
+func (p componentWithPrismaTagsEqualsUniqueParam) tagsField()      {}
+
+func (componentWithPrismaTagsEqualsUniqueParam) unique() {}
+func (componentWithPrismaTagsEqualsUniqueParam) equals() {}
+
+type componentTagActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var componentTagOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "created"},
+	{Name: "updated"},
+	{Name: "component_id"},
+	{Name: "tag_id"},
+}
+
+type ComponentTagRelationWith interface {
+	getQuery() builder.Query
+	with()
+	componentTagRelation()
+}
+
+type ComponentTagWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentTagModel()
+}
+
+type componentTagDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagDefaultParam) componentTagModel() {}
+
+type ComponentTagOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentTagModel()
+}
+
+type componentTagOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagOrderByParam) componentTagModel() {}
+
+type ComponentTagCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentTagModel()
+	isCursor()
+}
+
+type componentTagCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagCursorParam) isCursor() {}
+
+func (p componentTagCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagCursorParam) componentTagModel() {}
+
+type ComponentTagParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	componentTagModel()
+}
+
+type componentTagParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagParamUnique) componentTagModel() {}
+
+func (componentTagParamUnique) unique() {}
+
+func (p componentTagParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type ComponentTagEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentTagModel()
+}
+
+type componentTagEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagEqualsParam) componentTagModel() {}
+
+func (componentTagEqualsParam) equals() {}
+
+func (p componentTagEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type ComponentTagEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	componentTagModel()
+}
+
+type componentTagEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagEqualsUniqueParam) componentTagModel() {}
+
+func (componentTagEqualsUniqueParam) unique() {}
+func (componentTagEqualsUniqueParam) equals() {}
+
+func (p componentTagEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type ComponentTagSetParam interface {
+	field() builder.Field
+	settable()
+	componentTagModel()
+}
+
+type componentTagSetParam struct {
+	data builder.Field
+}
+
+func (componentTagSetParam) settable() {}
+
+func (p componentTagSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagSetParam) componentTagModel() {}
+
+type ComponentTagWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentTagModel()
+	idField()
+}
+
+type ComponentTagWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentTagModel()
+	idField()
+}
+
+type componentTagWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaIDSetParam) componentTagModel() {}
+
+func (p componentTagWithPrismaIDSetParam) idField() {}
+
+type ComponentTagWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentTagModel()
+	idField()
+}
+
+type componentTagWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaIDEqualsParam) componentTagModel() {}
+
+func (p componentTagWithPrismaIDEqualsParam) idField() {}
+
+func (componentTagWithPrismaIDSetParam) settable()  {}
+func (componentTagWithPrismaIDEqualsParam) equals() {}
+
+type componentTagWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaIDEqualsUniqueParam) componentTagModel() {}
+func (p componentTagWithPrismaIDEqualsUniqueParam) idField()           {}
+
+func (componentTagWithPrismaIDEqualsUniqueParam) unique() {}
+func (componentTagWithPrismaIDEqualsUniqueParam) equals() {}
+
+type ComponentTagWithPrismaCreatedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentTagModel()
+	createdField()
+}
+
+type ComponentTagWithPrismaCreatedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentTagModel()
+	createdField()
+}
+
+type componentTagWithPrismaCreatedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaCreatedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaCreatedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaCreatedSetParam) componentTagModel() {}
+
+func (p componentTagWithPrismaCreatedSetParam) createdField() {}
+
+type ComponentTagWithPrismaCreatedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentTagModel()
+	createdField()
+}
+
+type componentTagWithPrismaCreatedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaCreatedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaCreatedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaCreatedEqualsParam) componentTagModel() {}
+
+func (p componentTagWithPrismaCreatedEqualsParam) createdField() {}
+
+func (componentTagWithPrismaCreatedSetParam) settable()  {}
+func (componentTagWithPrismaCreatedEqualsParam) equals() {}
+
+type componentTagWithPrismaCreatedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaCreatedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaCreatedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaCreatedEqualsUniqueParam) componentTagModel() {}
+func (p componentTagWithPrismaCreatedEqualsUniqueParam) createdField()      {}
+
+func (componentTagWithPrismaCreatedEqualsUniqueParam) unique() {}
+func (componentTagWithPrismaCreatedEqualsUniqueParam) equals() {}
+
+type ComponentTagWithPrismaUpdatedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentTagModel()
+	updatedField()
+}
+
+type ComponentTagWithPrismaUpdatedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentTagModel()
+	updatedField()
+}
+
+type componentTagWithPrismaUpdatedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaUpdatedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaUpdatedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaUpdatedSetParam) componentTagModel() {}
+
+func (p componentTagWithPrismaUpdatedSetParam) updatedField() {}
+
+type ComponentTagWithPrismaUpdatedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentTagModel()
+	updatedField()
+}
+
+type componentTagWithPrismaUpdatedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaUpdatedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaUpdatedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaUpdatedEqualsParam) componentTagModel() {}
+
+func (p componentTagWithPrismaUpdatedEqualsParam) updatedField() {}
+
+func (componentTagWithPrismaUpdatedSetParam) settable()  {}
+func (componentTagWithPrismaUpdatedEqualsParam) equals() {}
+
+type componentTagWithPrismaUpdatedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaUpdatedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaUpdatedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaUpdatedEqualsUniqueParam) componentTagModel() {}
+func (p componentTagWithPrismaUpdatedEqualsUniqueParam) updatedField()      {}
+
+func (componentTagWithPrismaUpdatedEqualsUniqueParam) unique() {}
+func (componentTagWithPrismaUpdatedEqualsUniqueParam) equals() {}
+
+type ComponentTagWithPrismaComponentEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentTagModel()
+	componentField()
+}
+
+type ComponentTagWithPrismaComponentSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentTagModel()
+	componentField()
+}
+
+type componentTagWithPrismaComponentSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaComponentSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaComponentSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaComponentSetParam) componentTagModel() {}
+
+func (p componentTagWithPrismaComponentSetParam) componentField() {}
+
+type ComponentTagWithPrismaComponentWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentTagModel()
+	componentField()
+}
+
+type componentTagWithPrismaComponentEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaComponentEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaComponentEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaComponentEqualsParam) componentTagModel() {}
+
+func (p componentTagWithPrismaComponentEqualsParam) componentField() {}
+
+func (componentTagWithPrismaComponentSetParam) settable()  {}
+func (componentTagWithPrismaComponentEqualsParam) equals() {}
+
+type componentTagWithPrismaComponentEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaComponentEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaComponentEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaComponentEqualsUniqueParam) componentTagModel() {}
+func (p componentTagWithPrismaComponentEqualsUniqueParam) componentField()    {}
+
+func (componentTagWithPrismaComponentEqualsUniqueParam) unique() {}
+func (componentTagWithPrismaComponentEqualsUniqueParam) equals() {}
+
+type ComponentTagWithPrismaComponentIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentTagModel()
+	componentIDField()
+}
+
+type ComponentTagWithPrismaComponentIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentTagModel()
+	componentIDField()
+}
+
+type componentTagWithPrismaComponentIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaComponentIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaComponentIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaComponentIDSetParam) componentTagModel() {}
+
+func (p componentTagWithPrismaComponentIDSetParam) componentIDField() {}
+
+type ComponentTagWithPrismaComponentIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentTagModel()
+	componentIDField()
+}
+
+type componentTagWithPrismaComponentIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaComponentIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaComponentIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaComponentIDEqualsParam) componentTagModel() {}
+
+func (p componentTagWithPrismaComponentIDEqualsParam) componentIDField() {}
+
+func (componentTagWithPrismaComponentIDSetParam) settable()  {}
+func (componentTagWithPrismaComponentIDEqualsParam) equals() {}
+
+type componentTagWithPrismaComponentIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaComponentIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaComponentIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaComponentIDEqualsUniqueParam) componentTagModel() {}
+func (p componentTagWithPrismaComponentIDEqualsUniqueParam) componentIDField()  {}
+
+func (componentTagWithPrismaComponentIDEqualsUniqueParam) unique() {}
+func (componentTagWithPrismaComponentIDEqualsUniqueParam) equals() {}
+
+type ComponentTagWithPrismaTagEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentTagModel()
+	tagField()
+}
+
+type ComponentTagWithPrismaTagSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentTagModel()
+	tagField()
+}
+
+type componentTagWithPrismaTagSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaTagSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaTagSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaTagSetParam) componentTagModel() {}
+
+func (p componentTagWithPrismaTagSetParam) tagField() {}
+
+type ComponentTagWithPrismaTagWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentTagModel()
+	tagField()
+}
+
+type componentTagWithPrismaTagEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaTagEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaTagEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaTagEqualsParam) componentTagModel() {}
+
+func (p componentTagWithPrismaTagEqualsParam) tagField() {}
+
+func (componentTagWithPrismaTagSetParam) settable()  {}
+func (componentTagWithPrismaTagEqualsParam) equals() {}
+
+type componentTagWithPrismaTagEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaTagEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaTagEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaTagEqualsUniqueParam) componentTagModel() {}
+func (p componentTagWithPrismaTagEqualsUniqueParam) tagField()          {}
+
+func (componentTagWithPrismaTagEqualsUniqueParam) unique() {}
+func (componentTagWithPrismaTagEqualsUniqueParam) equals() {}
+
+type ComponentTagWithPrismaTagIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentTagModel()
+	tagIDField()
+}
+
+type ComponentTagWithPrismaTagIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentTagModel()
+	tagIDField()
+}
+
+type componentTagWithPrismaTagIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaTagIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaTagIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaTagIDSetParam) componentTagModel() {}
+
+func (p componentTagWithPrismaTagIDSetParam) tagIDField() {}
+
+type ComponentTagWithPrismaTagIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentTagModel()
+	tagIDField()
+}
+
+type componentTagWithPrismaTagIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaTagIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaTagIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaTagIDEqualsParam) componentTagModel() {}
+
+func (p componentTagWithPrismaTagIDEqualsParam) tagIDField() {}
+
+func (componentTagWithPrismaTagIDSetParam) settable()  {}
+func (componentTagWithPrismaTagIDEqualsParam) equals() {}
+
+type componentTagWithPrismaTagIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentTagWithPrismaTagIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentTagWithPrismaTagIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagWithPrismaTagIDEqualsUniqueParam) componentTagModel() {}
+func (p componentTagWithPrismaTagIDEqualsUniqueParam) tagIDField()        {}
+
+func (componentTagWithPrismaTagIDEqualsUniqueParam) unique() {}
+func (componentTagWithPrismaTagIDEqualsUniqueParam) equals() {}
+
+type tagActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var tagOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "organization_id"},
+	{Name: "created"},
+	{Name: "updated"},
+	{Name: "name"},
+}
+
+type TagRelationWith interface {
+	getQuery() builder.Query
+	with()
+	tagRelation()
+}
+
+type TagWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tagModel()
+}
+
+type tagDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagDefaultParam) tagModel() {}
+
+type TagOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tagModel()
+}
+
+type tagOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagOrderByParam) tagModel() {}
+
+type TagCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tagModel()
+	isCursor()
+}
+
+type tagCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagCursorParam) isCursor() {}
+
+func (p tagCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagCursorParam) tagModel() {}
+
+type TagParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	tagModel()
+}
+
+type tagParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagParamUnique) tagModel() {}
+
+func (tagParamUnique) unique() {}
+
+func (p tagParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p tagParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type TagEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tagModel()
+}
+
+type tagEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagEqualsParam) tagModel() {}
+
+func (tagEqualsParam) equals() {}
+
+func (p tagEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type TagEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	tagModel()
+}
+
+type tagEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagEqualsUniqueParam) tagModel() {}
+
+func (tagEqualsUniqueParam) unique() {}
+func (tagEqualsUniqueParam) equals() {}
+
+func (p tagEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type TagSetParam interface {
+	field() builder.Field
+	settable()
+	tagModel()
+}
+
+type tagSetParam struct {
+	data builder.Field
+}
+
+func (tagSetParam) settable() {}
+
+func (p tagSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagSetParam) tagModel() {}
+
+type TagWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tagModel()
+	idField()
+}
+
+type TagWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tagModel()
+	idField()
+}
+
+type tagWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaIDSetParam) tagModel() {}
+
+func (p tagWithPrismaIDSetParam) idField() {}
+
+type TagWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tagModel()
+	idField()
+}
+
+type tagWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaIDEqualsParam) tagModel() {}
+
+func (p tagWithPrismaIDEqualsParam) idField() {}
+
+func (tagWithPrismaIDSetParam) settable()  {}
+func (tagWithPrismaIDEqualsParam) equals() {}
+
+type tagWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaIDEqualsUniqueParam) tagModel() {}
+func (p tagWithPrismaIDEqualsUniqueParam) idField()  {}
+
+func (tagWithPrismaIDEqualsUniqueParam) unique() {}
+func (tagWithPrismaIDEqualsUniqueParam) equals() {}
+
+type TagWithPrismaOrganizationEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tagModel()
+	organizationField()
+}
+
+type TagWithPrismaOrganizationSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tagModel()
+	organizationField()
+}
+
+type tagWithPrismaOrganizationSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaOrganizationSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaOrganizationSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaOrganizationSetParam) tagModel() {}
+
+func (p tagWithPrismaOrganizationSetParam) organizationField() {}
+
+type TagWithPrismaOrganizationWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tagModel()
+	organizationField()
+}
+
+type tagWithPrismaOrganizationEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaOrganizationEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaOrganizationEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaOrganizationEqualsParam) tagModel() {}
+
+func (p tagWithPrismaOrganizationEqualsParam) organizationField() {}
+
+func (tagWithPrismaOrganizationSetParam) settable()  {}
+func (tagWithPrismaOrganizationEqualsParam) equals() {}
+
+type tagWithPrismaOrganizationEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaOrganizationEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaOrganizationEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaOrganizationEqualsUniqueParam) tagModel()          {}
+func (p tagWithPrismaOrganizationEqualsUniqueParam) organizationField() {}
+
+func (tagWithPrismaOrganizationEqualsUniqueParam) unique() {}
+func (tagWithPrismaOrganizationEqualsUniqueParam) equals() {}
+
+type TagWithPrismaOrganizationIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tagModel()
+	organizationIDField()
+}
+
+type TagWithPrismaOrganizationIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tagModel()
+	organizationIDField()
+}
+
+type tagWithPrismaOrganizationIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaOrganizationIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaOrganizationIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaOrganizationIDSetParam) tagModel() {}
+
+func (p tagWithPrismaOrganizationIDSetParam) organizationIDField() {}
+
+type TagWithPrismaOrganizationIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tagModel()
+	organizationIDField()
+}
+
+type tagWithPrismaOrganizationIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaOrganizationIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaOrganizationIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaOrganizationIDEqualsParam) tagModel() {}
+
+func (p tagWithPrismaOrganizationIDEqualsParam) organizationIDField() {}
+
+func (tagWithPrismaOrganizationIDSetParam) settable()  {}
+func (tagWithPrismaOrganizationIDEqualsParam) equals() {}
+
+type tagWithPrismaOrganizationIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaOrganizationIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaOrganizationIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaOrganizationIDEqualsUniqueParam) tagModel()            {}
+func (p tagWithPrismaOrganizationIDEqualsUniqueParam) organizationIDField() {}
+
+func (tagWithPrismaOrganizationIDEqualsUniqueParam) unique() {}
+func (tagWithPrismaOrganizationIDEqualsUniqueParam) equals() {}
+
+type TagWithPrismaCreatedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tagModel()
+	createdField()
+}
+
+type TagWithPrismaCreatedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tagModel()
+	createdField()
+}
+
+type tagWithPrismaCreatedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaCreatedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaCreatedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaCreatedSetParam) tagModel() {}
+
+func (p tagWithPrismaCreatedSetParam) createdField() {}
+
+type TagWithPrismaCreatedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tagModel()
+	createdField()
+}
+
+type tagWithPrismaCreatedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaCreatedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaCreatedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaCreatedEqualsParam) tagModel() {}
+
+func (p tagWithPrismaCreatedEqualsParam) createdField() {}
+
+func (tagWithPrismaCreatedSetParam) settable()  {}
+func (tagWithPrismaCreatedEqualsParam) equals() {}
+
+type tagWithPrismaCreatedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaCreatedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaCreatedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaCreatedEqualsUniqueParam) tagModel()     {}
+func (p tagWithPrismaCreatedEqualsUniqueParam) createdField() {}
+
+func (tagWithPrismaCreatedEqualsUniqueParam) unique() {}
+func (tagWithPrismaCreatedEqualsUniqueParam) equals() {}
+
+type TagWithPrismaUpdatedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tagModel()
+	updatedField()
+}
+
+type TagWithPrismaUpdatedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tagModel()
+	updatedField()
+}
+
+type tagWithPrismaUpdatedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaUpdatedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaUpdatedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaUpdatedSetParam) tagModel() {}
+
+func (p tagWithPrismaUpdatedSetParam) updatedField() {}
+
+type TagWithPrismaUpdatedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tagModel()
+	updatedField()
+}
+
+type tagWithPrismaUpdatedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaUpdatedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaUpdatedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaUpdatedEqualsParam) tagModel() {}
+
+func (p tagWithPrismaUpdatedEqualsParam) updatedField() {}
+
+func (tagWithPrismaUpdatedSetParam) settable()  {}
+func (tagWithPrismaUpdatedEqualsParam) equals() {}
+
+type tagWithPrismaUpdatedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaUpdatedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaUpdatedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaUpdatedEqualsUniqueParam) tagModel()     {}
+func (p tagWithPrismaUpdatedEqualsUniqueParam) updatedField() {}
+
+func (tagWithPrismaUpdatedEqualsUniqueParam) unique() {}
+func (tagWithPrismaUpdatedEqualsUniqueParam) equals() {}
+
+type TagWithPrismaNameEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tagModel()
+	nameField()
+}
+
+type TagWithPrismaNameSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tagModel()
+	nameField()
+}
+
+type tagWithPrismaNameSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaNameSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaNameSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaNameSetParam) tagModel() {}
+
+func (p tagWithPrismaNameSetParam) nameField() {}
+
+type TagWithPrismaNameWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tagModel()
+	nameField()
+}
+
+type tagWithPrismaNameEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaNameEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaNameEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaNameEqualsParam) tagModel() {}
+
+func (p tagWithPrismaNameEqualsParam) nameField() {}
+
+func (tagWithPrismaNameSetParam) settable()  {}
+func (tagWithPrismaNameEqualsParam) equals() {}
+
+type tagWithPrismaNameEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaNameEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaNameEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaNameEqualsUniqueParam) tagModel()  {}
+func (p tagWithPrismaNameEqualsUniqueParam) nameField() {}
+
+func (tagWithPrismaNameEqualsUniqueParam) unique() {}
+func (tagWithPrismaNameEqualsUniqueParam) equals() {}
+
+type TagWithPrismaComponentTagEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tagModel()
+	componentTagField()
+}
+
+type TagWithPrismaComponentTagSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tagModel()
+	componentTagField()
+}
+
+type tagWithPrismaComponentTagSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaComponentTagSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaComponentTagSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaComponentTagSetParam) tagModel() {}
+
+func (p tagWithPrismaComponentTagSetParam) componentTagField() {}
+
+type TagWithPrismaComponentTagWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tagModel()
+	componentTagField()
+}
+
+type tagWithPrismaComponentTagEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaComponentTagEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaComponentTagEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaComponentTagEqualsParam) tagModel() {}
+
+func (p tagWithPrismaComponentTagEqualsParam) componentTagField() {}
+
+func (tagWithPrismaComponentTagSetParam) settable()  {}
+func (tagWithPrismaComponentTagEqualsParam) equals() {}
+
+type tagWithPrismaComponentTagEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tagWithPrismaComponentTagEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tagWithPrismaComponentTagEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tagWithPrismaComponentTagEqualsUniqueParam) tagModel()          {}
+func (p tagWithPrismaComponentTagEqualsUniqueParam) componentTagField() {}
+
+func (tagWithPrismaComponentTagEqualsUniqueParam) unique() {}
+func (tagWithPrismaComponentTagEqualsUniqueParam) equals() {}
+
+type documentActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var documentOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "organization_id"},
+	{Name: "created"},
+	{Name: "updated"},
+	{Name: "name"},
+	{Name: "content"},
+}
+
+type DocumentRelationWith interface {
+	getQuery() builder.Query
+	with()
+	documentRelation()
+}
+
+type DocumentWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+}
+
+type documentDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentDefaultParam) documentModel() {}
+
+type DocumentOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+}
+
+type documentOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentOrderByParam) documentModel() {}
+
+type DocumentCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+	isCursor()
+}
+
+type documentCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentCursorParam) isCursor() {}
+
+func (p documentCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentCursorParam) documentModel() {}
+
+type DocumentParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	documentModel()
+}
+
+type documentParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentParamUnique) documentModel() {}
+
+func (documentParamUnique) unique() {}
+
+func (p documentParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p documentParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type DocumentEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentModel()
+}
+
+type documentEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentEqualsParam) documentModel() {}
+
+func (documentEqualsParam) equals() {}
+
+func (p documentEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type DocumentEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	documentModel()
+}
+
+type documentEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentEqualsUniqueParam) documentModel() {}
+
+func (documentEqualsUniqueParam) unique() {}
+func (documentEqualsUniqueParam) equals() {}
+
+func (p documentEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type DocumentSetParam interface {
+	field() builder.Field
+	settable()
+	documentModel()
+}
+
+type documentSetParam struct {
+	data builder.Field
+}
+
+func (documentSetParam) settable() {}
+
+func (p documentSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentSetParam) documentModel() {}
+
+type DocumentWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentModel()
+	idField()
+}
+
+type DocumentWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+	idField()
+}
+
+type documentWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaIDSetParam) documentModel() {}
+
+func (p documentWithPrismaIDSetParam) idField() {}
+
+type DocumentWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+	idField()
+}
+
+type documentWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaIDEqualsParam) documentModel() {}
+
+func (p documentWithPrismaIDEqualsParam) idField() {}
+
+func (documentWithPrismaIDSetParam) settable()  {}
+func (documentWithPrismaIDEqualsParam) equals() {}
+
+type documentWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaIDEqualsUniqueParam) documentModel() {}
+func (p documentWithPrismaIDEqualsUniqueParam) idField()       {}
+
+func (documentWithPrismaIDEqualsUniqueParam) unique() {}
+func (documentWithPrismaIDEqualsUniqueParam) equals() {}
+
+type DocumentWithPrismaOrganizationEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentModel()
+	organizationField()
+}
+
+type DocumentWithPrismaOrganizationSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+	organizationField()
+}
+
+type documentWithPrismaOrganizationSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaOrganizationSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaOrganizationSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaOrganizationSetParam) documentModel() {}
+
+func (p documentWithPrismaOrganizationSetParam) organizationField() {}
+
+type DocumentWithPrismaOrganizationWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+	organizationField()
+}
+
+type documentWithPrismaOrganizationEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaOrganizationEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaOrganizationEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaOrganizationEqualsParam) documentModel() {}
+
+func (p documentWithPrismaOrganizationEqualsParam) organizationField() {}
+
+func (documentWithPrismaOrganizationSetParam) settable()  {}
+func (documentWithPrismaOrganizationEqualsParam) equals() {}
+
+type documentWithPrismaOrganizationEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaOrganizationEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaOrganizationEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaOrganizationEqualsUniqueParam) documentModel()     {}
+func (p documentWithPrismaOrganizationEqualsUniqueParam) organizationField() {}
+
+func (documentWithPrismaOrganizationEqualsUniqueParam) unique() {}
+func (documentWithPrismaOrganizationEqualsUniqueParam) equals() {}
+
+type DocumentWithPrismaOrganizationIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentModel()
+	organizationIDField()
+}
+
+type DocumentWithPrismaOrganizationIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+	organizationIDField()
+}
+
+type documentWithPrismaOrganizationIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaOrganizationIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaOrganizationIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaOrganizationIDSetParam) documentModel() {}
+
+func (p documentWithPrismaOrganizationIDSetParam) organizationIDField() {}
+
+type DocumentWithPrismaOrganizationIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+	organizationIDField()
+}
+
+type documentWithPrismaOrganizationIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaOrganizationIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaOrganizationIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaOrganizationIDEqualsParam) documentModel() {}
+
+func (p documentWithPrismaOrganizationIDEqualsParam) organizationIDField() {}
+
+func (documentWithPrismaOrganizationIDSetParam) settable()  {}
+func (documentWithPrismaOrganizationIDEqualsParam) equals() {}
+
+type documentWithPrismaOrganizationIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaOrganizationIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaOrganizationIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaOrganizationIDEqualsUniqueParam) documentModel()       {}
+func (p documentWithPrismaOrganizationIDEqualsUniqueParam) organizationIDField() {}
+
+func (documentWithPrismaOrganizationIDEqualsUniqueParam) unique() {}
+func (documentWithPrismaOrganizationIDEqualsUniqueParam) equals() {}
+
+type DocumentWithPrismaCreatedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentModel()
+	createdField()
+}
+
+type DocumentWithPrismaCreatedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+	createdField()
+}
+
+type documentWithPrismaCreatedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaCreatedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaCreatedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaCreatedSetParam) documentModel() {}
+
+func (p documentWithPrismaCreatedSetParam) createdField() {}
+
+type DocumentWithPrismaCreatedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+	createdField()
+}
+
+type documentWithPrismaCreatedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaCreatedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaCreatedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaCreatedEqualsParam) documentModel() {}
+
+func (p documentWithPrismaCreatedEqualsParam) createdField() {}
+
+func (documentWithPrismaCreatedSetParam) settable()  {}
+func (documentWithPrismaCreatedEqualsParam) equals() {}
+
+type documentWithPrismaCreatedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaCreatedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaCreatedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaCreatedEqualsUniqueParam) documentModel() {}
+func (p documentWithPrismaCreatedEqualsUniqueParam) createdField()  {}
+
+func (documentWithPrismaCreatedEqualsUniqueParam) unique() {}
+func (documentWithPrismaCreatedEqualsUniqueParam) equals() {}
+
+type DocumentWithPrismaUpdatedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentModel()
+	updatedField()
+}
+
+type DocumentWithPrismaUpdatedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+	updatedField()
+}
+
+type documentWithPrismaUpdatedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaUpdatedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaUpdatedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaUpdatedSetParam) documentModel() {}
+
+func (p documentWithPrismaUpdatedSetParam) updatedField() {}
+
+type DocumentWithPrismaUpdatedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+	updatedField()
+}
+
+type documentWithPrismaUpdatedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaUpdatedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaUpdatedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaUpdatedEqualsParam) documentModel() {}
+
+func (p documentWithPrismaUpdatedEqualsParam) updatedField() {}
+
+func (documentWithPrismaUpdatedSetParam) settable()  {}
+func (documentWithPrismaUpdatedEqualsParam) equals() {}
+
+type documentWithPrismaUpdatedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaUpdatedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaUpdatedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaUpdatedEqualsUniqueParam) documentModel() {}
+func (p documentWithPrismaUpdatedEqualsUniqueParam) updatedField()  {}
+
+func (documentWithPrismaUpdatedEqualsUniqueParam) unique() {}
+func (documentWithPrismaUpdatedEqualsUniqueParam) equals() {}
+
+type DocumentWithPrismaNameEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentModel()
+	nameField()
+}
+
+type DocumentWithPrismaNameSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+	nameField()
+}
+
+type documentWithPrismaNameSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaNameSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaNameSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaNameSetParam) documentModel() {}
+
+func (p documentWithPrismaNameSetParam) nameField() {}
+
+type DocumentWithPrismaNameWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+	nameField()
+}
+
+type documentWithPrismaNameEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaNameEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaNameEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaNameEqualsParam) documentModel() {}
+
+func (p documentWithPrismaNameEqualsParam) nameField() {}
+
+func (documentWithPrismaNameSetParam) settable()  {}
+func (documentWithPrismaNameEqualsParam) equals() {}
+
+type documentWithPrismaNameEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaNameEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaNameEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaNameEqualsUniqueParam) documentModel() {}
+func (p documentWithPrismaNameEqualsUniqueParam) nameField()     {}
+
+func (documentWithPrismaNameEqualsUniqueParam) unique() {}
+func (documentWithPrismaNameEqualsUniqueParam) equals() {}
+
+type DocumentWithPrismaContentEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentModel()
+	contentField()
+}
+
+type DocumentWithPrismaContentSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+	contentField()
+}
+
+type documentWithPrismaContentSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaContentSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaContentSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaContentSetParam) documentModel() {}
+
+func (p documentWithPrismaContentSetParam) contentField() {}
+
+type DocumentWithPrismaContentWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+	contentField()
+}
+
+type documentWithPrismaContentEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaContentEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaContentEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaContentEqualsParam) documentModel() {}
+
+func (p documentWithPrismaContentEqualsParam) contentField() {}
+
+func (documentWithPrismaContentSetParam) settable()  {}
+func (documentWithPrismaContentEqualsParam) equals() {}
+
+type documentWithPrismaContentEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaContentEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaContentEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaContentEqualsUniqueParam) documentModel() {}
+func (p documentWithPrismaContentEqualsUniqueParam) contentField()  {}
+
+func (documentWithPrismaContentEqualsUniqueParam) unique() {}
+func (documentWithPrismaContentEqualsUniqueParam) equals() {}
+
+type DocumentWithPrismaBlocksEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentModel()
+	blocksField()
+}
+
+type DocumentWithPrismaBlocksSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+	blocksField()
+}
+
+type documentWithPrismaBlocksSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaBlocksSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaBlocksSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaBlocksSetParam) documentModel() {}
+
+func (p documentWithPrismaBlocksSetParam) blocksField() {}
+
+type DocumentWithPrismaBlocksWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentModel()
+	blocksField()
+}
+
+type documentWithPrismaBlocksEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaBlocksEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaBlocksEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaBlocksEqualsParam) documentModel() {}
+
+func (p documentWithPrismaBlocksEqualsParam) blocksField() {}
+
+func (documentWithPrismaBlocksSetParam) settable()  {}
+func (documentWithPrismaBlocksEqualsParam) equals() {}
+
+type documentWithPrismaBlocksEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentWithPrismaBlocksEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentWithPrismaBlocksEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentWithPrismaBlocksEqualsUniqueParam) documentModel() {}
+func (p documentWithPrismaBlocksEqualsUniqueParam) blocksField()   {}
+
+func (documentWithPrismaBlocksEqualsUniqueParam) unique() {}
+func (documentWithPrismaBlocksEqualsUniqueParam) equals() {}
+
+type documentBlockActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var documentBlockOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "created"},
+	{Name: "updated"},
+	{Name: "document_id"},
+	{Name: "block_id"},
+	{Name: "position"},
+}
+
+type DocumentBlockRelationWith interface {
+	getQuery() builder.Query
+	with()
+	documentBlockRelation()
+}
+
+type DocumentBlockWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+}
+
+type documentBlockDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockDefaultParam) documentBlockModel() {}
+
+type DocumentBlockOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+}
+
+type documentBlockOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockOrderByParam) documentBlockModel() {}
+
+type DocumentBlockCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+	isCursor()
+}
+
+type documentBlockCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockCursorParam) isCursor() {}
+
+func (p documentBlockCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockCursorParam) documentBlockModel() {}
+
+type DocumentBlockParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	documentBlockModel()
+}
+
+type documentBlockParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockParamUnique) documentBlockModel() {}
+
+func (documentBlockParamUnique) unique() {}
+
+func (p documentBlockParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type DocumentBlockEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentBlockModel()
+}
+
+type documentBlockEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockEqualsParam) documentBlockModel() {}
+
+func (documentBlockEqualsParam) equals() {}
+
+func (p documentBlockEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type DocumentBlockEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	documentBlockModel()
+}
+
+type documentBlockEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockEqualsUniqueParam) documentBlockModel() {}
+
+func (documentBlockEqualsUniqueParam) unique() {}
+func (documentBlockEqualsUniqueParam) equals() {}
+
+func (p documentBlockEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type DocumentBlockSetParam interface {
+	field() builder.Field
+	settable()
+	documentBlockModel()
+}
+
+type documentBlockSetParam struct {
+	data builder.Field
+}
+
+func (documentBlockSetParam) settable() {}
+
+func (p documentBlockSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockSetParam) documentBlockModel() {}
+
+type DocumentBlockWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentBlockModel()
+	idField()
+}
+
+type DocumentBlockWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+	idField()
+}
+
+type documentBlockWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaIDSetParam) documentBlockModel() {}
+
+func (p documentBlockWithPrismaIDSetParam) idField() {}
+
+type DocumentBlockWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+	idField()
+}
+
+type documentBlockWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaIDEqualsParam) documentBlockModel() {}
+
+func (p documentBlockWithPrismaIDEqualsParam) idField() {}
+
+func (documentBlockWithPrismaIDSetParam) settable()  {}
+func (documentBlockWithPrismaIDEqualsParam) equals() {}
+
+type documentBlockWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaIDEqualsUniqueParam) documentBlockModel() {}
+func (p documentBlockWithPrismaIDEqualsUniqueParam) idField()            {}
+
+func (documentBlockWithPrismaIDEqualsUniqueParam) unique() {}
+func (documentBlockWithPrismaIDEqualsUniqueParam) equals() {}
+
+type DocumentBlockWithPrismaCreatedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentBlockModel()
+	createdField()
+}
+
+type DocumentBlockWithPrismaCreatedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+	createdField()
+}
+
+type documentBlockWithPrismaCreatedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaCreatedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaCreatedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaCreatedSetParam) documentBlockModel() {}
+
+func (p documentBlockWithPrismaCreatedSetParam) createdField() {}
+
+type DocumentBlockWithPrismaCreatedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+	createdField()
+}
+
+type documentBlockWithPrismaCreatedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaCreatedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaCreatedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaCreatedEqualsParam) documentBlockModel() {}
+
+func (p documentBlockWithPrismaCreatedEqualsParam) createdField() {}
+
+func (documentBlockWithPrismaCreatedSetParam) settable()  {}
+func (documentBlockWithPrismaCreatedEqualsParam) equals() {}
+
+type documentBlockWithPrismaCreatedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaCreatedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaCreatedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaCreatedEqualsUniqueParam) documentBlockModel() {}
+func (p documentBlockWithPrismaCreatedEqualsUniqueParam) createdField()       {}
+
+func (documentBlockWithPrismaCreatedEqualsUniqueParam) unique() {}
+func (documentBlockWithPrismaCreatedEqualsUniqueParam) equals() {}
+
+type DocumentBlockWithPrismaUpdatedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentBlockModel()
+	updatedField()
+}
+
+type DocumentBlockWithPrismaUpdatedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+	updatedField()
+}
+
+type documentBlockWithPrismaUpdatedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaUpdatedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaUpdatedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaUpdatedSetParam) documentBlockModel() {}
+
+func (p documentBlockWithPrismaUpdatedSetParam) updatedField() {}
+
+type DocumentBlockWithPrismaUpdatedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+	updatedField()
+}
+
+type documentBlockWithPrismaUpdatedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaUpdatedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaUpdatedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaUpdatedEqualsParam) documentBlockModel() {}
+
+func (p documentBlockWithPrismaUpdatedEqualsParam) updatedField() {}
+
+func (documentBlockWithPrismaUpdatedSetParam) settable()  {}
+func (documentBlockWithPrismaUpdatedEqualsParam) equals() {}
+
+type documentBlockWithPrismaUpdatedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaUpdatedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaUpdatedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaUpdatedEqualsUniqueParam) documentBlockModel() {}
+func (p documentBlockWithPrismaUpdatedEqualsUniqueParam) updatedField()       {}
+
+func (documentBlockWithPrismaUpdatedEqualsUniqueParam) unique() {}
+func (documentBlockWithPrismaUpdatedEqualsUniqueParam) equals() {}
+
+type DocumentBlockWithPrismaDocumentEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentBlockModel()
+	documentField()
+}
+
+type DocumentBlockWithPrismaDocumentSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+	documentField()
+}
+
+type documentBlockWithPrismaDocumentSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaDocumentSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaDocumentSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaDocumentSetParam) documentBlockModel() {}
+
+func (p documentBlockWithPrismaDocumentSetParam) documentField() {}
+
+type DocumentBlockWithPrismaDocumentWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+	documentField()
+}
+
+type documentBlockWithPrismaDocumentEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaDocumentEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaDocumentEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaDocumentEqualsParam) documentBlockModel() {}
+
+func (p documentBlockWithPrismaDocumentEqualsParam) documentField() {}
+
+func (documentBlockWithPrismaDocumentSetParam) settable()  {}
+func (documentBlockWithPrismaDocumentEqualsParam) equals() {}
+
+type documentBlockWithPrismaDocumentEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaDocumentEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaDocumentEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaDocumentEqualsUniqueParam) documentBlockModel() {}
+func (p documentBlockWithPrismaDocumentEqualsUniqueParam) documentField()      {}
+
+func (documentBlockWithPrismaDocumentEqualsUniqueParam) unique() {}
+func (documentBlockWithPrismaDocumentEqualsUniqueParam) equals() {}
+
+type DocumentBlockWithPrismaDocumentIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentBlockModel()
+	documentIDField()
+}
+
+type DocumentBlockWithPrismaDocumentIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+	documentIDField()
+}
+
+type documentBlockWithPrismaDocumentIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaDocumentIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaDocumentIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaDocumentIDSetParam) documentBlockModel() {}
+
+func (p documentBlockWithPrismaDocumentIDSetParam) documentIDField() {}
+
+type DocumentBlockWithPrismaDocumentIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+	documentIDField()
+}
+
+type documentBlockWithPrismaDocumentIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaDocumentIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaDocumentIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaDocumentIDEqualsParam) documentBlockModel() {}
+
+func (p documentBlockWithPrismaDocumentIDEqualsParam) documentIDField() {}
+
+func (documentBlockWithPrismaDocumentIDSetParam) settable()  {}
+func (documentBlockWithPrismaDocumentIDEqualsParam) equals() {}
+
+type documentBlockWithPrismaDocumentIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaDocumentIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaDocumentIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaDocumentIDEqualsUniqueParam) documentBlockModel() {}
+func (p documentBlockWithPrismaDocumentIDEqualsUniqueParam) documentIDField()    {}
+
+func (documentBlockWithPrismaDocumentIDEqualsUniqueParam) unique() {}
+func (documentBlockWithPrismaDocumentIDEqualsUniqueParam) equals() {}
+
+type DocumentBlockWithPrismaBlockEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentBlockModel()
+	blockField()
+}
+
+type DocumentBlockWithPrismaBlockSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+	blockField()
+}
+
+type documentBlockWithPrismaBlockSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaBlockSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaBlockSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaBlockSetParam) documentBlockModel() {}
+
+func (p documentBlockWithPrismaBlockSetParam) blockField() {}
+
+type DocumentBlockWithPrismaBlockWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+	blockField()
+}
+
+type documentBlockWithPrismaBlockEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaBlockEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaBlockEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaBlockEqualsParam) documentBlockModel() {}
+
+func (p documentBlockWithPrismaBlockEqualsParam) blockField() {}
+
+func (documentBlockWithPrismaBlockSetParam) settable()  {}
+func (documentBlockWithPrismaBlockEqualsParam) equals() {}
+
+type documentBlockWithPrismaBlockEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaBlockEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaBlockEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaBlockEqualsUniqueParam) documentBlockModel() {}
+func (p documentBlockWithPrismaBlockEqualsUniqueParam) blockField()         {}
+
+func (documentBlockWithPrismaBlockEqualsUniqueParam) unique() {}
+func (documentBlockWithPrismaBlockEqualsUniqueParam) equals() {}
+
+type DocumentBlockWithPrismaBlockIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentBlockModel()
+	blockIDField()
+}
+
+type DocumentBlockWithPrismaBlockIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+	blockIDField()
+}
+
+type documentBlockWithPrismaBlockIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaBlockIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaBlockIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaBlockIDSetParam) documentBlockModel() {}
+
+func (p documentBlockWithPrismaBlockIDSetParam) blockIDField() {}
+
+type DocumentBlockWithPrismaBlockIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+	blockIDField()
+}
+
+type documentBlockWithPrismaBlockIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaBlockIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaBlockIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaBlockIDEqualsParam) documentBlockModel() {}
+
+func (p documentBlockWithPrismaBlockIDEqualsParam) blockIDField() {}
+
+func (documentBlockWithPrismaBlockIDSetParam) settable()  {}
+func (documentBlockWithPrismaBlockIDEqualsParam) equals() {}
+
+type documentBlockWithPrismaBlockIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaBlockIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaBlockIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaBlockIDEqualsUniqueParam) documentBlockModel() {}
+func (p documentBlockWithPrismaBlockIDEqualsUniqueParam) blockIDField()       {}
+
+func (documentBlockWithPrismaBlockIDEqualsUniqueParam) unique() {}
+func (documentBlockWithPrismaBlockIDEqualsUniqueParam) equals() {}
+
+type DocumentBlockWithPrismaPositionEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	documentBlockModel()
+	positionField()
+}
+
+type DocumentBlockWithPrismaPositionSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+	positionField()
+}
+
+type documentBlockWithPrismaPositionSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaPositionSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaPositionSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaPositionSetParam) documentBlockModel() {}
+
+func (p documentBlockWithPrismaPositionSetParam) positionField() {}
+
+type DocumentBlockWithPrismaPositionWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	documentBlockModel()
+	positionField()
+}
+
+type documentBlockWithPrismaPositionEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaPositionEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaPositionEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaPositionEqualsParam) documentBlockModel() {}
+
+func (p documentBlockWithPrismaPositionEqualsParam) positionField() {}
+
+func (documentBlockWithPrismaPositionSetParam) settable()  {}
+func (documentBlockWithPrismaPositionEqualsParam) equals() {}
+
+type documentBlockWithPrismaPositionEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p documentBlockWithPrismaPositionEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p documentBlockWithPrismaPositionEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockWithPrismaPositionEqualsUniqueParam) documentBlockModel() {}
+func (p documentBlockWithPrismaPositionEqualsUniqueParam) positionField()      {}
+
+func (documentBlockWithPrismaPositionEqualsUniqueParam) unique() {}
+func (documentBlockWithPrismaPositionEqualsUniqueParam) equals() {}
+
+type blockActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var blockOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "organization_id"},
+	{Name: "created"},
+	{Name: "updated"},
+	{Name: "type"},
+	{Name: "content"},
+}
+
+type BlockRelationWith interface {
+	getQuery() builder.Query
+	with()
+	blockRelation()
+}
+
+type BlockWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+}
+
+type blockDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockDefaultParam) blockModel() {}
+
+type BlockOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+}
+
+type blockOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockOrderByParam) blockModel() {}
+
+type BlockCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+	isCursor()
+}
+
+type blockCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockCursorParam) isCursor() {}
+
+func (p blockCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockCursorParam) blockModel() {}
+
+type BlockParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	blockModel()
+}
+
+type blockParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockParamUnique) blockModel() {}
+
+func (blockParamUnique) unique() {}
+
+func (p blockParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p blockParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type BlockEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	blockModel()
+}
+
+type blockEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockEqualsParam) blockModel() {}
+
+func (blockEqualsParam) equals() {}
+
+func (p blockEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type BlockEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	blockModel()
+}
+
+type blockEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockEqualsUniqueParam) blockModel() {}
+
+func (blockEqualsUniqueParam) unique() {}
+func (blockEqualsUniqueParam) equals() {}
+
+func (p blockEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type BlockSetParam interface {
+	field() builder.Field
+	settable()
+	blockModel()
+}
+
+type blockSetParam struct {
+	data builder.Field
+}
+
+func (blockSetParam) settable() {}
+
+func (p blockSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockSetParam) blockModel() {}
+
+type BlockWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	blockModel()
+	idField()
+}
+
+type BlockWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+	idField()
+}
+
+type blockWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaIDSetParam) blockModel() {}
+
+func (p blockWithPrismaIDSetParam) idField() {}
+
+type BlockWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+	idField()
+}
+
+type blockWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaIDEqualsParam) blockModel() {}
+
+func (p blockWithPrismaIDEqualsParam) idField() {}
+
+func (blockWithPrismaIDSetParam) settable()  {}
+func (blockWithPrismaIDEqualsParam) equals() {}
+
+type blockWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaIDEqualsUniqueParam) blockModel() {}
+func (p blockWithPrismaIDEqualsUniqueParam) idField()    {}
+
+func (blockWithPrismaIDEqualsUniqueParam) unique() {}
+func (blockWithPrismaIDEqualsUniqueParam) equals() {}
+
+type BlockWithPrismaOrganizationEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	blockModel()
+	organizationField()
+}
+
+type BlockWithPrismaOrganizationSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+	organizationField()
+}
+
+type blockWithPrismaOrganizationSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaOrganizationSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaOrganizationSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaOrganizationSetParam) blockModel() {}
+
+func (p blockWithPrismaOrganizationSetParam) organizationField() {}
+
+type BlockWithPrismaOrganizationWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+	organizationField()
+}
+
+type blockWithPrismaOrganizationEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaOrganizationEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaOrganizationEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaOrganizationEqualsParam) blockModel() {}
+
+func (p blockWithPrismaOrganizationEqualsParam) organizationField() {}
+
+func (blockWithPrismaOrganizationSetParam) settable()  {}
+func (blockWithPrismaOrganizationEqualsParam) equals() {}
+
+type blockWithPrismaOrganizationEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaOrganizationEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaOrganizationEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaOrganizationEqualsUniqueParam) blockModel()        {}
+func (p blockWithPrismaOrganizationEqualsUniqueParam) organizationField() {}
+
+func (blockWithPrismaOrganizationEqualsUniqueParam) unique() {}
+func (blockWithPrismaOrganizationEqualsUniqueParam) equals() {}
+
+type BlockWithPrismaOrganizationIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	blockModel()
+	organizationIDField()
+}
+
+type BlockWithPrismaOrganizationIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+	organizationIDField()
+}
+
+type blockWithPrismaOrganizationIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaOrganizationIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaOrganizationIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaOrganizationIDSetParam) blockModel() {}
+
+func (p blockWithPrismaOrganizationIDSetParam) organizationIDField() {}
+
+type BlockWithPrismaOrganizationIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+	organizationIDField()
+}
+
+type blockWithPrismaOrganizationIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaOrganizationIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaOrganizationIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaOrganizationIDEqualsParam) blockModel() {}
+
+func (p blockWithPrismaOrganizationIDEqualsParam) organizationIDField() {}
+
+func (blockWithPrismaOrganizationIDSetParam) settable()  {}
+func (blockWithPrismaOrganizationIDEqualsParam) equals() {}
+
+type blockWithPrismaOrganizationIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaOrganizationIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaOrganizationIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaOrganizationIDEqualsUniqueParam) blockModel()          {}
+func (p blockWithPrismaOrganizationIDEqualsUniqueParam) organizationIDField() {}
+
+func (blockWithPrismaOrganizationIDEqualsUniqueParam) unique() {}
+func (blockWithPrismaOrganizationIDEqualsUniqueParam) equals() {}
+
+type BlockWithPrismaCreatedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	blockModel()
+	createdField()
+}
+
+type BlockWithPrismaCreatedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+	createdField()
+}
+
+type blockWithPrismaCreatedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaCreatedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaCreatedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaCreatedSetParam) blockModel() {}
+
+func (p blockWithPrismaCreatedSetParam) createdField() {}
+
+type BlockWithPrismaCreatedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+	createdField()
+}
+
+type blockWithPrismaCreatedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaCreatedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaCreatedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaCreatedEqualsParam) blockModel() {}
+
+func (p blockWithPrismaCreatedEqualsParam) createdField() {}
+
+func (blockWithPrismaCreatedSetParam) settable()  {}
+func (blockWithPrismaCreatedEqualsParam) equals() {}
+
+type blockWithPrismaCreatedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaCreatedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaCreatedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaCreatedEqualsUniqueParam) blockModel()   {}
+func (p blockWithPrismaCreatedEqualsUniqueParam) createdField() {}
+
+func (blockWithPrismaCreatedEqualsUniqueParam) unique() {}
+func (blockWithPrismaCreatedEqualsUniqueParam) equals() {}
+
+type BlockWithPrismaUpdatedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	blockModel()
+	updatedField()
+}
+
+type BlockWithPrismaUpdatedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+	updatedField()
+}
+
+type blockWithPrismaUpdatedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaUpdatedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaUpdatedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaUpdatedSetParam) blockModel() {}
+
+func (p blockWithPrismaUpdatedSetParam) updatedField() {}
+
+type BlockWithPrismaUpdatedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+	updatedField()
+}
+
+type blockWithPrismaUpdatedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaUpdatedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaUpdatedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaUpdatedEqualsParam) blockModel() {}
+
+func (p blockWithPrismaUpdatedEqualsParam) updatedField() {}
+
+func (blockWithPrismaUpdatedSetParam) settable()  {}
+func (blockWithPrismaUpdatedEqualsParam) equals() {}
+
+type blockWithPrismaUpdatedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaUpdatedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaUpdatedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaUpdatedEqualsUniqueParam) blockModel()   {}
+func (p blockWithPrismaUpdatedEqualsUniqueParam) updatedField() {}
+
+func (blockWithPrismaUpdatedEqualsUniqueParam) unique() {}
+func (blockWithPrismaUpdatedEqualsUniqueParam) equals() {}
+
+type BlockWithPrismaTypeEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	blockModel()
+	typeField()
+}
+
+type BlockWithPrismaTypeSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+	typeField()
+}
+
+type blockWithPrismaTypeSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaTypeSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaTypeSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaTypeSetParam) blockModel() {}
+
+func (p blockWithPrismaTypeSetParam) typeField() {}
+
+type BlockWithPrismaTypeWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+	typeField()
+}
+
+type blockWithPrismaTypeEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaTypeEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaTypeEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaTypeEqualsParam) blockModel() {}
+
+func (p blockWithPrismaTypeEqualsParam) typeField() {}
+
+func (blockWithPrismaTypeSetParam) settable()  {}
+func (blockWithPrismaTypeEqualsParam) equals() {}
+
+type blockWithPrismaTypeEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaTypeEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaTypeEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaTypeEqualsUniqueParam) blockModel() {}
+func (p blockWithPrismaTypeEqualsUniqueParam) typeField()  {}
+
+func (blockWithPrismaTypeEqualsUniqueParam) unique() {}
+func (blockWithPrismaTypeEqualsUniqueParam) equals() {}
+
+type BlockWithPrismaContentEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	blockModel()
+	contentField()
+}
+
+type BlockWithPrismaContentSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+	contentField()
+}
+
+type blockWithPrismaContentSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaContentSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaContentSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaContentSetParam) blockModel() {}
+
+func (p blockWithPrismaContentSetParam) contentField() {}
+
+type BlockWithPrismaContentWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+	contentField()
+}
+
+type blockWithPrismaContentEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaContentEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaContentEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaContentEqualsParam) blockModel() {}
+
+func (p blockWithPrismaContentEqualsParam) contentField() {}
+
+func (blockWithPrismaContentSetParam) settable()  {}
+func (blockWithPrismaContentEqualsParam) equals() {}
+
+type blockWithPrismaContentEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaContentEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaContentEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaContentEqualsUniqueParam) blockModel()   {}
+func (p blockWithPrismaContentEqualsUniqueParam) contentField() {}
+
+func (blockWithPrismaContentEqualsUniqueParam) unique() {}
+func (blockWithPrismaContentEqualsUniqueParam) equals() {}
+
+type BlockWithPrismaDocumentsEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	blockModel()
+	documentsField()
+}
+
+type BlockWithPrismaDocumentsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+	documentsField()
+}
+
+type blockWithPrismaDocumentsSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaDocumentsSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaDocumentsSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaDocumentsSetParam) blockModel() {}
+
+func (p blockWithPrismaDocumentsSetParam) documentsField() {}
+
+type BlockWithPrismaDocumentsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	blockModel()
+	documentsField()
+}
+
+type blockWithPrismaDocumentsEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaDocumentsEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaDocumentsEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaDocumentsEqualsParam) blockModel() {}
+
+func (p blockWithPrismaDocumentsEqualsParam) documentsField() {}
+
+func (blockWithPrismaDocumentsSetParam) settable()  {}
+func (blockWithPrismaDocumentsEqualsParam) equals() {}
+
+type blockWithPrismaDocumentsEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p blockWithPrismaDocumentsEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p blockWithPrismaDocumentsEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p blockWithPrismaDocumentsEqualsUniqueParam) blockModel()     {}
+func (p blockWithPrismaDocumentsEqualsUniqueParam) documentsField() {}
+
+func (blockWithPrismaDocumentsEqualsUniqueParam) unique() {}
+func (blockWithPrismaDocumentsEqualsUniqueParam) equals() {}
+
 // --- template create.gotpl ---
 
 // Creates a single organization.
@@ -22851,10 +44027,10 @@ func (r organizationCreateOne) Tx() OrganizationUniqueTxResult {
 
 // Creates a single user.
 func (r userActions) CreateOne(
+	_organization UserWithPrismaOrganizationSetParam,
 	_email UserWithPrismaEmailSetParam,
 	_password UserWithPrismaPasswordSetParam,
 	_status UserWithPrismaStatusSetParam,
-	_organization UserWithPrismaOrganizationSetParam,
 
 	optional ...UserSetParam,
 ) userCreateOne {
@@ -22869,10 +44045,10 @@ func (r userActions) CreateOne(
 
 	var fields []builder.Field
 
+	fields = append(fields, _organization.field())
 	fields = append(fields, _email.field())
 	fields = append(fields, _password.field())
 	fields = append(fields, _status.field())
-	fields = append(fields, _organization.field())
 
 	for _, q := range optional {
 		fields = append(fields, q.field())
@@ -22925,6 +44101,7 @@ func (r userCreateOne) Tx() UserUniqueTxResult {
 
 // Creates a single session.
 func (r sessionActions) CreateOne(
+	_organization SessionWithPrismaOrganizationSetParam,
 	_status SessionWithPrismaStatusSetParam,
 	_user SessionWithPrismaUserSetParam,
 
@@ -22941,6 +44118,7 @@ func (r sessionActions) CreateOne(
 
 	var fields []builder.Field
 
+	fields = append(fields, _organization.field())
 	fields = append(fields, _status.field())
 	fields = append(fields, _user.field())
 
@@ -23340,6 +44518,436 @@ func (r userRoleCreateOne) Exec(ctx context.Context) (*UserRoleModel, error) {
 
 func (r userRoleCreateOne) Tx() UserRoleUniqueTxResult {
 	v := newUserRoleUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single component.
+func (r componentActions) CreateOne(
+	_organization ComponentWithPrismaOrganizationSetParam,
+	_name ComponentWithPrismaNameSetParam,
+	_type ComponentWithPrismaTypeSetParam,
+	_provider ComponentWithPrismaProviderSetParam,
+
+	optional ...ComponentSetParam,
+) componentCreateOne {
+	var v componentCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "Component"
+	v.query.Outputs = componentOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _organization.field())
+	fields = append(fields, _name.field())
+	fields = append(fields, _type.field())
+	fields = append(fields, _provider.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r componentCreateOne) With(params ...ComponentRelationWith) componentCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type componentCreateOne struct {
+	query builder.Query
+}
+
+func (p componentCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p componentCreateOne) componentModel() {}
+
+func (r componentCreateOne) Exec(ctx context.Context) (*ComponentModel, error) {
+	var v ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentCreateOne) Tx() ComponentUniqueTxResult {
+	v := newComponentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single componentTag.
+func (r componentTagActions) CreateOne(
+	_component ComponentTagWithPrismaComponentSetParam,
+	_tag ComponentTagWithPrismaTagSetParam,
+
+	optional ...ComponentTagSetParam,
+) componentTagCreateOne {
+	var v componentTagCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "ComponentTag"
+	v.query.Outputs = componentTagOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _component.field())
+	fields = append(fields, _tag.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r componentTagCreateOne) With(params ...ComponentTagRelationWith) componentTagCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type componentTagCreateOne struct {
+	query builder.Query
+}
+
+func (p componentTagCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p componentTagCreateOne) componentTagModel() {}
+
+func (r componentTagCreateOne) Exec(ctx context.Context) (*ComponentTagModel, error) {
+	var v ComponentTagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentTagCreateOne) Tx() ComponentTagUniqueTxResult {
+	v := newComponentTagUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single tag.
+func (r tagActions) CreateOne(
+	_organization TagWithPrismaOrganizationSetParam,
+	_name TagWithPrismaNameSetParam,
+
+	optional ...TagSetParam,
+) tagCreateOne {
+	var v tagCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "Tag"
+	v.query.Outputs = tagOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _organization.field())
+	fields = append(fields, _name.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r tagCreateOne) With(params ...TagRelationWith) tagCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type tagCreateOne struct {
+	query builder.Query
+}
+
+func (p tagCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p tagCreateOne) tagModel() {}
+
+func (r tagCreateOne) Exec(ctx context.Context) (*TagModel, error) {
+	var v TagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tagCreateOne) Tx() TagUniqueTxResult {
+	v := newTagUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single document.
+func (r documentActions) CreateOne(
+	_organization DocumentWithPrismaOrganizationSetParam,
+	_name DocumentWithPrismaNameSetParam,
+	_content DocumentWithPrismaContentSetParam,
+
+	optional ...DocumentSetParam,
+) documentCreateOne {
+	var v documentCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "Document"
+	v.query.Outputs = documentOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _organization.field())
+	fields = append(fields, _name.field())
+	fields = append(fields, _content.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r documentCreateOne) With(params ...DocumentRelationWith) documentCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type documentCreateOne struct {
+	query builder.Query
+}
+
+func (p documentCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p documentCreateOne) documentModel() {}
+
+func (r documentCreateOne) Exec(ctx context.Context) (*DocumentModel, error) {
+	var v DocumentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentCreateOne) Tx() DocumentUniqueTxResult {
+	v := newDocumentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single documentBlock.
+func (r documentBlockActions) CreateOne(
+	_document DocumentBlockWithPrismaDocumentSetParam,
+	_block DocumentBlockWithPrismaBlockSetParam,
+	_position DocumentBlockWithPrismaPositionSetParam,
+
+	optional ...DocumentBlockSetParam,
+) documentBlockCreateOne {
+	var v documentBlockCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "DocumentBlock"
+	v.query.Outputs = documentBlockOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _document.field())
+	fields = append(fields, _block.field())
+	fields = append(fields, _position.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r documentBlockCreateOne) With(params ...DocumentBlockRelationWith) documentBlockCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type documentBlockCreateOne struct {
+	query builder.Query
+}
+
+func (p documentBlockCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p documentBlockCreateOne) documentBlockModel() {}
+
+func (r documentBlockCreateOne) Exec(ctx context.Context) (*DocumentBlockModel, error) {
+	var v DocumentBlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentBlockCreateOne) Tx() DocumentBlockUniqueTxResult {
+	v := newDocumentBlockUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single block.
+func (r blockActions) CreateOne(
+	_organization BlockWithPrismaOrganizationSetParam,
+	_type BlockWithPrismaTypeSetParam,
+	_content BlockWithPrismaContentSetParam,
+
+	optional ...BlockSetParam,
+) blockCreateOne {
+	var v blockCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "Block"
+	v.query.Outputs = blockOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _organization.field())
+	fields = append(fields, _type.field())
+	fields = append(fields, _content.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r blockCreateOne) With(params ...BlockRelationWith) blockCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type blockCreateOne struct {
+	query builder.Query
+}
+
+func (p blockCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p blockCreateOne) blockModel() {}
+
+func (r blockCreateOne) Exec(ctx context.Context) (*BlockModel, error) {
+	var v BlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r blockCreateOne) Tx() BlockUniqueTxResult {
+	v := newBlockUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -23895,6 +45503,2776 @@ func (r organizationToUsersDeleteMany) Exec(ctx context.Context) (*BatchResult, 
 }
 
 func (r organizationToUsersDeleteMany) Tx() OrganizationManyTxResult {
+	v := newOrganizationManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type organizationToComponentsFindUnique struct {
+	query builder.Query
+}
+
+func (r organizationToComponentsFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToComponentsFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToComponentsFindUnique) with()                 {}
+func (r organizationToComponentsFindUnique) organizationModel()    {}
+func (r organizationToComponentsFindUnique) organizationRelation() {}
+
+func (r organizationToComponentsFindUnique) With(params ...ComponentRelationWith) organizationToComponentsFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToComponentsFindUnique) Select(params ...organizationPrismaFields) organizationToComponentsFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToComponentsFindUnique) Omit(params ...organizationPrismaFields) organizationToComponentsFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToComponentsFindUnique) Exec(ctx context.Context) (
+	*OrganizationModel,
+	error,
+) {
+	var v *OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToComponentsFindUnique) ExecInner(ctx context.Context) (
+	*InnerOrganization,
+	error,
+) {
+	var v *InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToComponentsFindUnique) Update(params ...OrganizationSetParam) organizationToComponentsUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Organization"
+
+	var v organizationToComponentsUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type organizationToComponentsUpdateUnique struct {
+	query builder.Query
+}
+
+func (r organizationToComponentsUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToComponentsUpdateUnique) organizationModel() {}
+
+func (r organizationToComponentsUpdateUnique) Exec(ctx context.Context) (*OrganizationModel, error) {
+	var v OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToComponentsUpdateUnique) Tx() OrganizationUniqueTxResult {
+	v := newOrganizationUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r organizationToComponentsFindUnique) Delete() organizationToComponentsDeleteUnique {
+	var v organizationToComponentsDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Organization"
+
+	return v
+}
+
+type organizationToComponentsDeleteUnique struct {
+	query builder.Query
+}
+
+func (r organizationToComponentsDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p organizationToComponentsDeleteUnique) organizationModel() {}
+
+func (r organizationToComponentsDeleteUnique) Exec(ctx context.Context) (*OrganizationModel, error) {
+	var v OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToComponentsDeleteUnique) Tx() OrganizationUniqueTxResult {
+	v := newOrganizationUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type organizationToComponentsFindFirst struct {
+	query builder.Query
+}
+
+func (r organizationToComponentsFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToComponentsFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToComponentsFindFirst) with()                 {}
+func (r organizationToComponentsFindFirst) organizationModel()    {}
+func (r organizationToComponentsFindFirst) organizationRelation() {}
+
+func (r organizationToComponentsFindFirst) With(params ...ComponentRelationWith) organizationToComponentsFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToComponentsFindFirst) Select(params ...organizationPrismaFields) organizationToComponentsFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToComponentsFindFirst) Omit(params ...organizationPrismaFields) organizationToComponentsFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToComponentsFindFirst) OrderBy(params ...ComponentOrderByParam) organizationToComponentsFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r organizationToComponentsFindFirst) Skip(count int) organizationToComponentsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToComponentsFindFirst) Take(count int) organizationToComponentsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToComponentsFindFirst) Cursor(cursor OrganizationCursorParam) organizationToComponentsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r organizationToComponentsFindFirst) Exec(ctx context.Context) (
+	*OrganizationModel,
+	error,
+) {
+	var v *OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToComponentsFindFirst) ExecInner(ctx context.Context) (
+	*InnerOrganization,
+	error,
+) {
+	var v *InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type organizationToComponentsFindMany struct {
+	query builder.Query
+}
+
+func (r organizationToComponentsFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToComponentsFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToComponentsFindMany) with()                 {}
+func (r organizationToComponentsFindMany) organizationModel()    {}
+func (r organizationToComponentsFindMany) organizationRelation() {}
+
+func (r organizationToComponentsFindMany) With(params ...ComponentRelationWith) organizationToComponentsFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToComponentsFindMany) Select(params ...organizationPrismaFields) organizationToComponentsFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToComponentsFindMany) Omit(params ...organizationPrismaFields) organizationToComponentsFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToComponentsFindMany) OrderBy(params ...ComponentOrderByParam) organizationToComponentsFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r organizationToComponentsFindMany) Skip(count int) organizationToComponentsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToComponentsFindMany) Take(count int) organizationToComponentsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToComponentsFindMany) Cursor(cursor OrganizationCursorParam) organizationToComponentsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r organizationToComponentsFindMany) Exec(ctx context.Context) (
+	[]OrganizationModel,
+	error,
+) {
+	var v []OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r organizationToComponentsFindMany) ExecInner(ctx context.Context) (
+	[]InnerOrganization,
+	error,
+) {
+	var v []InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r organizationToComponentsFindMany) Update(params ...OrganizationSetParam) organizationToComponentsUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Organization"
+
+	r.query.Outputs = countOutput
+
+	var v organizationToComponentsUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type organizationToComponentsUpdateMany struct {
+	query builder.Query
+}
+
+func (r organizationToComponentsUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToComponentsUpdateMany) organizationModel() {}
+
+func (r organizationToComponentsUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToComponentsUpdateMany) Tx() OrganizationManyTxResult {
+	v := newOrganizationManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r organizationToComponentsFindMany) Delete() organizationToComponentsDeleteMany {
+	var v organizationToComponentsDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Organization"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type organizationToComponentsDeleteMany struct {
+	query builder.Query
+}
+
+func (r organizationToComponentsDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p organizationToComponentsDeleteMany) organizationModel() {}
+
+func (r organizationToComponentsDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToComponentsDeleteMany) Tx() OrganizationManyTxResult {
+	v := newOrganizationManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type organizationToTagsFindUnique struct {
+	query builder.Query
+}
+
+func (r organizationToTagsFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToTagsFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToTagsFindUnique) with()                 {}
+func (r organizationToTagsFindUnique) organizationModel()    {}
+func (r organizationToTagsFindUnique) organizationRelation() {}
+
+func (r organizationToTagsFindUnique) With(params ...TagRelationWith) organizationToTagsFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToTagsFindUnique) Select(params ...organizationPrismaFields) organizationToTagsFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToTagsFindUnique) Omit(params ...organizationPrismaFields) organizationToTagsFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToTagsFindUnique) Exec(ctx context.Context) (
+	*OrganizationModel,
+	error,
+) {
+	var v *OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToTagsFindUnique) ExecInner(ctx context.Context) (
+	*InnerOrganization,
+	error,
+) {
+	var v *InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToTagsFindUnique) Update(params ...OrganizationSetParam) organizationToTagsUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Organization"
+
+	var v organizationToTagsUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type organizationToTagsUpdateUnique struct {
+	query builder.Query
+}
+
+func (r organizationToTagsUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToTagsUpdateUnique) organizationModel() {}
+
+func (r organizationToTagsUpdateUnique) Exec(ctx context.Context) (*OrganizationModel, error) {
+	var v OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToTagsUpdateUnique) Tx() OrganizationUniqueTxResult {
+	v := newOrganizationUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r organizationToTagsFindUnique) Delete() organizationToTagsDeleteUnique {
+	var v organizationToTagsDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Organization"
+
+	return v
+}
+
+type organizationToTagsDeleteUnique struct {
+	query builder.Query
+}
+
+func (r organizationToTagsDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p organizationToTagsDeleteUnique) organizationModel() {}
+
+func (r organizationToTagsDeleteUnique) Exec(ctx context.Context) (*OrganizationModel, error) {
+	var v OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToTagsDeleteUnique) Tx() OrganizationUniqueTxResult {
+	v := newOrganizationUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type organizationToTagsFindFirst struct {
+	query builder.Query
+}
+
+func (r organizationToTagsFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToTagsFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToTagsFindFirst) with()                 {}
+func (r organizationToTagsFindFirst) organizationModel()    {}
+func (r organizationToTagsFindFirst) organizationRelation() {}
+
+func (r organizationToTagsFindFirst) With(params ...TagRelationWith) organizationToTagsFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToTagsFindFirst) Select(params ...organizationPrismaFields) organizationToTagsFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToTagsFindFirst) Omit(params ...organizationPrismaFields) organizationToTagsFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToTagsFindFirst) OrderBy(params ...TagOrderByParam) organizationToTagsFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r organizationToTagsFindFirst) Skip(count int) organizationToTagsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToTagsFindFirst) Take(count int) organizationToTagsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToTagsFindFirst) Cursor(cursor OrganizationCursorParam) organizationToTagsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r organizationToTagsFindFirst) Exec(ctx context.Context) (
+	*OrganizationModel,
+	error,
+) {
+	var v *OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToTagsFindFirst) ExecInner(ctx context.Context) (
+	*InnerOrganization,
+	error,
+) {
+	var v *InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type organizationToTagsFindMany struct {
+	query builder.Query
+}
+
+func (r organizationToTagsFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToTagsFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToTagsFindMany) with()                 {}
+func (r organizationToTagsFindMany) organizationModel()    {}
+func (r organizationToTagsFindMany) organizationRelation() {}
+
+func (r organizationToTagsFindMany) With(params ...TagRelationWith) organizationToTagsFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToTagsFindMany) Select(params ...organizationPrismaFields) organizationToTagsFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToTagsFindMany) Omit(params ...organizationPrismaFields) organizationToTagsFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToTagsFindMany) OrderBy(params ...TagOrderByParam) organizationToTagsFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r organizationToTagsFindMany) Skip(count int) organizationToTagsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToTagsFindMany) Take(count int) organizationToTagsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToTagsFindMany) Cursor(cursor OrganizationCursorParam) organizationToTagsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r organizationToTagsFindMany) Exec(ctx context.Context) (
+	[]OrganizationModel,
+	error,
+) {
+	var v []OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r organizationToTagsFindMany) ExecInner(ctx context.Context) (
+	[]InnerOrganization,
+	error,
+) {
+	var v []InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r organizationToTagsFindMany) Update(params ...OrganizationSetParam) organizationToTagsUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Organization"
+
+	r.query.Outputs = countOutput
+
+	var v organizationToTagsUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type organizationToTagsUpdateMany struct {
+	query builder.Query
+}
+
+func (r organizationToTagsUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToTagsUpdateMany) organizationModel() {}
+
+func (r organizationToTagsUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToTagsUpdateMany) Tx() OrganizationManyTxResult {
+	v := newOrganizationManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r organizationToTagsFindMany) Delete() organizationToTagsDeleteMany {
+	var v organizationToTagsDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Organization"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type organizationToTagsDeleteMany struct {
+	query builder.Query
+}
+
+func (r organizationToTagsDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p organizationToTagsDeleteMany) organizationModel() {}
+
+func (r organizationToTagsDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToTagsDeleteMany) Tx() OrganizationManyTxResult {
+	v := newOrganizationManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type organizationToDocumentsFindUnique struct {
+	query builder.Query
+}
+
+func (r organizationToDocumentsFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToDocumentsFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToDocumentsFindUnique) with()                 {}
+func (r organizationToDocumentsFindUnique) organizationModel()    {}
+func (r organizationToDocumentsFindUnique) organizationRelation() {}
+
+func (r organizationToDocumentsFindUnique) With(params ...DocumentRelationWith) organizationToDocumentsFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToDocumentsFindUnique) Select(params ...organizationPrismaFields) organizationToDocumentsFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToDocumentsFindUnique) Omit(params ...organizationPrismaFields) organizationToDocumentsFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToDocumentsFindUnique) Exec(ctx context.Context) (
+	*OrganizationModel,
+	error,
+) {
+	var v *OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToDocumentsFindUnique) ExecInner(ctx context.Context) (
+	*InnerOrganization,
+	error,
+) {
+	var v *InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToDocumentsFindUnique) Update(params ...OrganizationSetParam) organizationToDocumentsUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Organization"
+
+	var v organizationToDocumentsUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type organizationToDocumentsUpdateUnique struct {
+	query builder.Query
+}
+
+func (r organizationToDocumentsUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToDocumentsUpdateUnique) organizationModel() {}
+
+func (r organizationToDocumentsUpdateUnique) Exec(ctx context.Context) (*OrganizationModel, error) {
+	var v OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToDocumentsUpdateUnique) Tx() OrganizationUniqueTxResult {
+	v := newOrganizationUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r organizationToDocumentsFindUnique) Delete() organizationToDocumentsDeleteUnique {
+	var v organizationToDocumentsDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Organization"
+
+	return v
+}
+
+type organizationToDocumentsDeleteUnique struct {
+	query builder.Query
+}
+
+func (r organizationToDocumentsDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p organizationToDocumentsDeleteUnique) organizationModel() {}
+
+func (r organizationToDocumentsDeleteUnique) Exec(ctx context.Context) (*OrganizationModel, error) {
+	var v OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToDocumentsDeleteUnique) Tx() OrganizationUniqueTxResult {
+	v := newOrganizationUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type organizationToDocumentsFindFirst struct {
+	query builder.Query
+}
+
+func (r organizationToDocumentsFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToDocumentsFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToDocumentsFindFirst) with()                 {}
+func (r organizationToDocumentsFindFirst) organizationModel()    {}
+func (r organizationToDocumentsFindFirst) organizationRelation() {}
+
+func (r organizationToDocumentsFindFirst) With(params ...DocumentRelationWith) organizationToDocumentsFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToDocumentsFindFirst) Select(params ...organizationPrismaFields) organizationToDocumentsFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToDocumentsFindFirst) Omit(params ...organizationPrismaFields) organizationToDocumentsFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToDocumentsFindFirst) OrderBy(params ...DocumentOrderByParam) organizationToDocumentsFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r organizationToDocumentsFindFirst) Skip(count int) organizationToDocumentsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToDocumentsFindFirst) Take(count int) organizationToDocumentsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToDocumentsFindFirst) Cursor(cursor OrganizationCursorParam) organizationToDocumentsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r organizationToDocumentsFindFirst) Exec(ctx context.Context) (
+	*OrganizationModel,
+	error,
+) {
+	var v *OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToDocumentsFindFirst) ExecInner(ctx context.Context) (
+	*InnerOrganization,
+	error,
+) {
+	var v *InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type organizationToDocumentsFindMany struct {
+	query builder.Query
+}
+
+func (r organizationToDocumentsFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToDocumentsFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToDocumentsFindMany) with()                 {}
+func (r organizationToDocumentsFindMany) organizationModel()    {}
+func (r organizationToDocumentsFindMany) organizationRelation() {}
+
+func (r organizationToDocumentsFindMany) With(params ...DocumentRelationWith) organizationToDocumentsFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToDocumentsFindMany) Select(params ...organizationPrismaFields) organizationToDocumentsFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToDocumentsFindMany) Omit(params ...organizationPrismaFields) organizationToDocumentsFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToDocumentsFindMany) OrderBy(params ...DocumentOrderByParam) organizationToDocumentsFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r organizationToDocumentsFindMany) Skip(count int) organizationToDocumentsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToDocumentsFindMany) Take(count int) organizationToDocumentsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToDocumentsFindMany) Cursor(cursor OrganizationCursorParam) organizationToDocumentsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r organizationToDocumentsFindMany) Exec(ctx context.Context) (
+	[]OrganizationModel,
+	error,
+) {
+	var v []OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r organizationToDocumentsFindMany) ExecInner(ctx context.Context) (
+	[]InnerOrganization,
+	error,
+) {
+	var v []InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r organizationToDocumentsFindMany) Update(params ...OrganizationSetParam) organizationToDocumentsUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Organization"
+
+	r.query.Outputs = countOutput
+
+	var v organizationToDocumentsUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type organizationToDocumentsUpdateMany struct {
+	query builder.Query
+}
+
+func (r organizationToDocumentsUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToDocumentsUpdateMany) organizationModel() {}
+
+func (r organizationToDocumentsUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToDocumentsUpdateMany) Tx() OrganizationManyTxResult {
+	v := newOrganizationManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r organizationToDocumentsFindMany) Delete() organizationToDocumentsDeleteMany {
+	var v organizationToDocumentsDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Organization"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type organizationToDocumentsDeleteMany struct {
+	query builder.Query
+}
+
+func (r organizationToDocumentsDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p organizationToDocumentsDeleteMany) organizationModel() {}
+
+func (r organizationToDocumentsDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToDocumentsDeleteMany) Tx() OrganizationManyTxResult {
+	v := newOrganizationManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type organizationToBlockFindUnique struct {
+	query builder.Query
+}
+
+func (r organizationToBlockFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToBlockFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToBlockFindUnique) with()                 {}
+func (r organizationToBlockFindUnique) organizationModel()    {}
+func (r organizationToBlockFindUnique) organizationRelation() {}
+
+func (r organizationToBlockFindUnique) With(params ...BlockRelationWith) organizationToBlockFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToBlockFindUnique) Select(params ...organizationPrismaFields) organizationToBlockFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToBlockFindUnique) Omit(params ...organizationPrismaFields) organizationToBlockFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToBlockFindUnique) Exec(ctx context.Context) (
+	*OrganizationModel,
+	error,
+) {
+	var v *OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToBlockFindUnique) ExecInner(ctx context.Context) (
+	*InnerOrganization,
+	error,
+) {
+	var v *InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToBlockFindUnique) Update(params ...OrganizationSetParam) organizationToBlockUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Organization"
+
+	var v organizationToBlockUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type organizationToBlockUpdateUnique struct {
+	query builder.Query
+}
+
+func (r organizationToBlockUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToBlockUpdateUnique) organizationModel() {}
+
+func (r organizationToBlockUpdateUnique) Exec(ctx context.Context) (*OrganizationModel, error) {
+	var v OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToBlockUpdateUnique) Tx() OrganizationUniqueTxResult {
+	v := newOrganizationUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r organizationToBlockFindUnique) Delete() organizationToBlockDeleteUnique {
+	var v organizationToBlockDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Organization"
+
+	return v
+}
+
+type organizationToBlockDeleteUnique struct {
+	query builder.Query
+}
+
+func (r organizationToBlockDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p organizationToBlockDeleteUnique) organizationModel() {}
+
+func (r organizationToBlockDeleteUnique) Exec(ctx context.Context) (*OrganizationModel, error) {
+	var v OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToBlockDeleteUnique) Tx() OrganizationUniqueTxResult {
+	v := newOrganizationUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type organizationToBlockFindFirst struct {
+	query builder.Query
+}
+
+func (r organizationToBlockFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToBlockFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToBlockFindFirst) with()                 {}
+func (r organizationToBlockFindFirst) organizationModel()    {}
+func (r organizationToBlockFindFirst) organizationRelation() {}
+
+func (r organizationToBlockFindFirst) With(params ...BlockRelationWith) organizationToBlockFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToBlockFindFirst) Select(params ...organizationPrismaFields) organizationToBlockFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToBlockFindFirst) Omit(params ...organizationPrismaFields) organizationToBlockFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToBlockFindFirst) OrderBy(params ...BlockOrderByParam) organizationToBlockFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r organizationToBlockFindFirst) Skip(count int) organizationToBlockFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToBlockFindFirst) Take(count int) organizationToBlockFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToBlockFindFirst) Cursor(cursor OrganizationCursorParam) organizationToBlockFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r organizationToBlockFindFirst) Exec(ctx context.Context) (
+	*OrganizationModel,
+	error,
+) {
+	var v *OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToBlockFindFirst) ExecInner(ctx context.Context) (
+	*InnerOrganization,
+	error,
+) {
+	var v *InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type organizationToBlockFindMany struct {
+	query builder.Query
+}
+
+func (r organizationToBlockFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToBlockFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToBlockFindMany) with()                 {}
+func (r organizationToBlockFindMany) organizationModel()    {}
+func (r organizationToBlockFindMany) organizationRelation() {}
+
+func (r organizationToBlockFindMany) With(params ...BlockRelationWith) organizationToBlockFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToBlockFindMany) Select(params ...organizationPrismaFields) organizationToBlockFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToBlockFindMany) Omit(params ...organizationPrismaFields) organizationToBlockFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToBlockFindMany) OrderBy(params ...BlockOrderByParam) organizationToBlockFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r organizationToBlockFindMany) Skip(count int) organizationToBlockFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToBlockFindMany) Take(count int) organizationToBlockFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToBlockFindMany) Cursor(cursor OrganizationCursorParam) organizationToBlockFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r organizationToBlockFindMany) Exec(ctx context.Context) (
+	[]OrganizationModel,
+	error,
+) {
+	var v []OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r organizationToBlockFindMany) ExecInner(ctx context.Context) (
+	[]InnerOrganization,
+	error,
+) {
+	var v []InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r organizationToBlockFindMany) Update(params ...OrganizationSetParam) organizationToBlockUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Organization"
+
+	r.query.Outputs = countOutput
+
+	var v organizationToBlockUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type organizationToBlockUpdateMany struct {
+	query builder.Query
+}
+
+func (r organizationToBlockUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToBlockUpdateMany) organizationModel() {}
+
+func (r organizationToBlockUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToBlockUpdateMany) Tx() OrganizationManyTxResult {
+	v := newOrganizationManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r organizationToBlockFindMany) Delete() organizationToBlockDeleteMany {
+	var v organizationToBlockDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Organization"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type organizationToBlockDeleteMany struct {
+	query builder.Query
+}
+
+func (r organizationToBlockDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p organizationToBlockDeleteMany) organizationModel() {}
+
+func (r organizationToBlockDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToBlockDeleteMany) Tx() OrganizationManyTxResult {
+	v := newOrganizationManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type organizationToSessionsFindUnique struct {
+	query builder.Query
+}
+
+func (r organizationToSessionsFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToSessionsFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToSessionsFindUnique) with()                 {}
+func (r organizationToSessionsFindUnique) organizationModel()    {}
+func (r organizationToSessionsFindUnique) organizationRelation() {}
+
+func (r organizationToSessionsFindUnique) With(params ...SessionRelationWith) organizationToSessionsFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToSessionsFindUnique) Select(params ...organizationPrismaFields) organizationToSessionsFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToSessionsFindUnique) Omit(params ...organizationPrismaFields) organizationToSessionsFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToSessionsFindUnique) Exec(ctx context.Context) (
+	*OrganizationModel,
+	error,
+) {
+	var v *OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToSessionsFindUnique) ExecInner(ctx context.Context) (
+	*InnerOrganization,
+	error,
+) {
+	var v *InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToSessionsFindUnique) Update(params ...OrganizationSetParam) organizationToSessionsUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Organization"
+
+	var v organizationToSessionsUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type organizationToSessionsUpdateUnique struct {
+	query builder.Query
+}
+
+func (r organizationToSessionsUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToSessionsUpdateUnique) organizationModel() {}
+
+func (r organizationToSessionsUpdateUnique) Exec(ctx context.Context) (*OrganizationModel, error) {
+	var v OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToSessionsUpdateUnique) Tx() OrganizationUniqueTxResult {
+	v := newOrganizationUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r organizationToSessionsFindUnique) Delete() organizationToSessionsDeleteUnique {
+	var v organizationToSessionsDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Organization"
+
+	return v
+}
+
+type organizationToSessionsDeleteUnique struct {
+	query builder.Query
+}
+
+func (r organizationToSessionsDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p organizationToSessionsDeleteUnique) organizationModel() {}
+
+func (r organizationToSessionsDeleteUnique) Exec(ctx context.Context) (*OrganizationModel, error) {
+	var v OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToSessionsDeleteUnique) Tx() OrganizationUniqueTxResult {
+	v := newOrganizationUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type organizationToSessionsFindFirst struct {
+	query builder.Query
+}
+
+func (r organizationToSessionsFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToSessionsFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToSessionsFindFirst) with()                 {}
+func (r organizationToSessionsFindFirst) organizationModel()    {}
+func (r organizationToSessionsFindFirst) organizationRelation() {}
+
+func (r organizationToSessionsFindFirst) With(params ...SessionRelationWith) organizationToSessionsFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToSessionsFindFirst) Select(params ...organizationPrismaFields) organizationToSessionsFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToSessionsFindFirst) Omit(params ...organizationPrismaFields) organizationToSessionsFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToSessionsFindFirst) OrderBy(params ...SessionOrderByParam) organizationToSessionsFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r organizationToSessionsFindFirst) Skip(count int) organizationToSessionsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToSessionsFindFirst) Take(count int) organizationToSessionsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToSessionsFindFirst) Cursor(cursor OrganizationCursorParam) organizationToSessionsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r organizationToSessionsFindFirst) Exec(ctx context.Context) (
+	*OrganizationModel,
+	error,
+) {
+	var v *OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToSessionsFindFirst) ExecInner(ctx context.Context) (
+	*InnerOrganization,
+	error,
+) {
+	var v *InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type organizationToSessionsFindMany struct {
+	query builder.Query
+}
+
+func (r organizationToSessionsFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToSessionsFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToSessionsFindMany) with()                 {}
+func (r organizationToSessionsFindMany) organizationModel()    {}
+func (r organizationToSessionsFindMany) organizationRelation() {}
+
+func (r organizationToSessionsFindMany) With(params ...SessionRelationWith) organizationToSessionsFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToSessionsFindMany) Select(params ...organizationPrismaFields) organizationToSessionsFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToSessionsFindMany) Omit(params ...organizationPrismaFields) organizationToSessionsFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToSessionsFindMany) OrderBy(params ...SessionOrderByParam) organizationToSessionsFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r organizationToSessionsFindMany) Skip(count int) organizationToSessionsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToSessionsFindMany) Take(count int) organizationToSessionsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToSessionsFindMany) Cursor(cursor OrganizationCursorParam) organizationToSessionsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r organizationToSessionsFindMany) Exec(ctx context.Context) (
+	[]OrganizationModel,
+	error,
+) {
+	var v []OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r organizationToSessionsFindMany) ExecInner(ctx context.Context) (
+	[]InnerOrganization,
+	error,
+) {
+	var v []InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r organizationToSessionsFindMany) Update(params ...OrganizationSetParam) organizationToSessionsUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Organization"
+
+	r.query.Outputs = countOutput
+
+	var v organizationToSessionsUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type organizationToSessionsUpdateMany struct {
+	query builder.Query
+}
+
+func (r organizationToSessionsUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToSessionsUpdateMany) organizationModel() {}
+
+func (r organizationToSessionsUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToSessionsUpdateMany) Tx() OrganizationManyTxResult {
+	v := newOrganizationManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r organizationToSessionsFindMany) Delete() organizationToSessionsDeleteMany {
+	var v organizationToSessionsDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Organization"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type organizationToSessionsDeleteMany struct {
+	query builder.Query
+}
+
+func (r organizationToSessionsDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p organizationToSessionsDeleteMany) organizationModel() {}
+
+func (r organizationToSessionsDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToSessionsDeleteMany) Tx() OrganizationManyTxResult {
 	v := newOrganizationManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
@@ -26858,6 +51236,560 @@ func (r userDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
 
 func (r userDeleteMany) Tx() UserManyTxResult {
 	v := newUserManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type sessionToOrganizationFindUnique struct {
+	query builder.Query
+}
+
+func (r sessionToOrganizationFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r sessionToOrganizationFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r sessionToOrganizationFindUnique) with()            {}
+func (r sessionToOrganizationFindUnique) sessionModel()    {}
+func (r sessionToOrganizationFindUnique) sessionRelation() {}
+
+func (r sessionToOrganizationFindUnique) With(params ...OrganizationRelationWith) sessionToOrganizationFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r sessionToOrganizationFindUnique) Select(params ...sessionPrismaFields) sessionToOrganizationFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r sessionToOrganizationFindUnique) Omit(params ...sessionPrismaFields) sessionToOrganizationFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range sessionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r sessionToOrganizationFindUnique) Exec(ctx context.Context) (
+	*SessionModel,
+	error,
+) {
+	var v *SessionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r sessionToOrganizationFindUnique) ExecInner(ctx context.Context) (
+	*InnerSession,
+	error,
+) {
+	var v *InnerSession
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r sessionToOrganizationFindUnique) Update(params ...SessionSetParam) sessionToOrganizationUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Session"
+
+	var v sessionToOrganizationUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type sessionToOrganizationUpdateUnique struct {
+	query builder.Query
+}
+
+func (r sessionToOrganizationUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r sessionToOrganizationUpdateUnique) sessionModel() {}
+
+func (r sessionToOrganizationUpdateUnique) Exec(ctx context.Context) (*SessionModel, error) {
+	var v SessionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r sessionToOrganizationUpdateUnique) Tx() SessionUniqueTxResult {
+	v := newSessionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r sessionToOrganizationFindUnique) Delete() sessionToOrganizationDeleteUnique {
+	var v sessionToOrganizationDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Session"
+
+	return v
+}
+
+type sessionToOrganizationDeleteUnique struct {
+	query builder.Query
+}
+
+func (r sessionToOrganizationDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p sessionToOrganizationDeleteUnique) sessionModel() {}
+
+func (r sessionToOrganizationDeleteUnique) Exec(ctx context.Context) (*SessionModel, error) {
+	var v SessionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r sessionToOrganizationDeleteUnique) Tx() SessionUniqueTxResult {
+	v := newSessionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type sessionToOrganizationFindFirst struct {
+	query builder.Query
+}
+
+func (r sessionToOrganizationFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r sessionToOrganizationFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r sessionToOrganizationFindFirst) with()            {}
+func (r sessionToOrganizationFindFirst) sessionModel()    {}
+func (r sessionToOrganizationFindFirst) sessionRelation() {}
+
+func (r sessionToOrganizationFindFirst) With(params ...OrganizationRelationWith) sessionToOrganizationFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r sessionToOrganizationFindFirst) Select(params ...sessionPrismaFields) sessionToOrganizationFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r sessionToOrganizationFindFirst) Omit(params ...sessionPrismaFields) sessionToOrganizationFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range sessionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r sessionToOrganizationFindFirst) OrderBy(params ...OrganizationOrderByParam) sessionToOrganizationFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r sessionToOrganizationFindFirst) Skip(count int) sessionToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r sessionToOrganizationFindFirst) Take(count int) sessionToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r sessionToOrganizationFindFirst) Cursor(cursor SessionCursorParam) sessionToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r sessionToOrganizationFindFirst) Exec(ctx context.Context) (
+	*SessionModel,
+	error,
+) {
+	var v *SessionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r sessionToOrganizationFindFirst) ExecInner(ctx context.Context) (
+	*InnerSession,
+	error,
+) {
+	var v *InnerSession
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type sessionToOrganizationFindMany struct {
+	query builder.Query
+}
+
+func (r sessionToOrganizationFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r sessionToOrganizationFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r sessionToOrganizationFindMany) with()            {}
+func (r sessionToOrganizationFindMany) sessionModel()    {}
+func (r sessionToOrganizationFindMany) sessionRelation() {}
+
+func (r sessionToOrganizationFindMany) With(params ...OrganizationRelationWith) sessionToOrganizationFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r sessionToOrganizationFindMany) Select(params ...sessionPrismaFields) sessionToOrganizationFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r sessionToOrganizationFindMany) Omit(params ...sessionPrismaFields) sessionToOrganizationFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range sessionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r sessionToOrganizationFindMany) OrderBy(params ...OrganizationOrderByParam) sessionToOrganizationFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r sessionToOrganizationFindMany) Skip(count int) sessionToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r sessionToOrganizationFindMany) Take(count int) sessionToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r sessionToOrganizationFindMany) Cursor(cursor SessionCursorParam) sessionToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r sessionToOrganizationFindMany) Exec(ctx context.Context) (
+	[]SessionModel,
+	error,
+) {
+	var v []SessionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r sessionToOrganizationFindMany) ExecInner(ctx context.Context) (
+	[]InnerSession,
+	error,
+) {
+	var v []InnerSession
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r sessionToOrganizationFindMany) Update(params ...SessionSetParam) sessionToOrganizationUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Session"
+
+	r.query.Outputs = countOutput
+
+	var v sessionToOrganizationUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type sessionToOrganizationUpdateMany struct {
+	query builder.Query
+}
+
+func (r sessionToOrganizationUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r sessionToOrganizationUpdateMany) sessionModel() {}
+
+func (r sessionToOrganizationUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r sessionToOrganizationUpdateMany) Tx() SessionManyTxResult {
+	v := newSessionManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r sessionToOrganizationFindMany) Delete() sessionToOrganizationDeleteMany {
+	var v sessionToOrganizationDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Session"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type sessionToOrganizationDeleteMany struct {
+	query builder.Query
+}
+
+func (r sessionToOrganizationDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p sessionToOrganizationDeleteMany) sessionModel() {}
+
+func (r sessionToOrganizationDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r sessionToOrganizationDeleteMany) Tx() SessionManyTxResult {
+	v := newSessionManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -35195,6 +60127,10554 @@ func (r userRoleDeleteMany) Tx() UserRoleManyTxResult {
 	return v
 }
 
+type componentToOrganizationFindUnique struct {
+	query builder.Query
+}
+
+func (r componentToOrganizationFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToOrganizationFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToOrganizationFindUnique) with()              {}
+func (r componentToOrganizationFindUnique) componentModel()    {}
+func (r componentToOrganizationFindUnique) componentRelation() {}
+
+func (r componentToOrganizationFindUnique) With(params ...OrganizationRelationWith) componentToOrganizationFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentToOrganizationFindUnique) Select(params ...componentPrismaFields) componentToOrganizationFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToOrganizationFindUnique) Omit(params ...componentPrismaFields) componentToOrganizationFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToOrganizationFindUnique) Exec(ctx context.Context) (
+	*ComponentModel,
+	error,
+) {
+	var v *ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentToOrganizationFindUnique) ExecInner(ctx context.Context) (
+	*InnerComponent,
+	error,
+) {
+	var v *InnerComponent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentToOrganizationFindUnique) Update(params ...ComponentSetParam) componentToOrganizationUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Component"
+
+	var v componentToOrganizationUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type componentToOrganizationUpdateUnique struct {
+	query builder.Query
+}
+
+func (r componentToOrganizationUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToOrganizationUpdateUnique) componentModel() {}
+
+func (r componentToOrganizationUpdateUnique) Exec(ctx context.Context) (*ComponentModel, error) {
+	var v ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentToOrganizationUpdateUnique) Tx() ComponentUniqueTxResult {
+	v := newComponentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r componentToOrganizationFindUnique) Delete() componentToOrganizationDeleteUnique {
+	var v componentToOrganizationDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Component"
+
+	return v
+}
+
+type componentToOrganizationDeleteUnique struct {
+	query builder.Query
+}
+
+func (r componentToOrganizationDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p componentToOrganizationDeleteUnique) componentModel() {}
+
+func (r componentToOrganizationDeleteUnique) Exec(ctx context.Context) (*ComponentModel, error) {
+	var v ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentToOrganizationDeleteUnique) Tx() ComponentUniqueTxResult {
+	v := newComponentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type componentToOrganizationFindFirst struct {
+	query builder.Query
+}
+
+func (r componentToOrganizationFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToOrganizationFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToOrganizationFindFirst) with()              {}
+func (r componentToOrganizationFindFirst) componentModel()    {}
+func (r componentToOrganizationFindFirst) componentRelation() {}
+
+func (r componentToOrganizationFindFirst) With(params ...OrganizationRelationWith) componentToOrganizationFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentToOrganizationFindFirst) Select(params ...componentPrismaFields) componentToOrganizationFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToOrganizationFindFirst) Omit(params ...componentPrismaFields) componentToOrganizationFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToOrganizationFindFirst) OrderBy(params ...OrganizationOrderByParam) componentToOrganizationFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r componentToOrganizationFindFirst) Skip(count int) componentToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentToOrganizationFindFirst) Take(count int) componentToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentToOrganizationFindFirst) Cursor(cursor ComponentCursorParam) componentToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r componentToOrganizationFindFirst) Exec(ctx context.Context) (
+	*ComponentModel,
+	error,
+) {
+	var v *ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentToOrganizationFindFirst) ExecInner(ctx context.Context) (
+	*InnerComponent,
+	error,
+) {
+	var v *InnerComponent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type componentToOrganizationFindMany struct {
+	query builder.Query
+}
+
+func (r componentToOrganizationFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToOrganizationFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToOrganizationFindMany) with()              {}
+func (r componentToOrganizationFindMany) componentModel()    {}
+func (r componentToOrganizationFindMany) componentRelation() {}
+
+func (r componentToOrganizationFindMany) With(params ...OrganizationRelationWith) componentToOrganizationFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentToOrganizationFindMany) Select(params ...componentPrismaFields) componentToOrganizationFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToOrganizationFindMany) Omit(params ...componentPrismaFields) componentToOrganizationFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToOrganizationFindMany) OrderBy(params ...OrganizationOrderByParam) componentToOrganizationFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r componentToOrganizationFindMany) Skip(count int) componentToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentToOrganizationFindMany) Take(count int) componentToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentToOrganizationFindMany) Cursor(cursor ComponentCursorParam) componentToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r componentToOrganizationFindMany) Exec(ctx context.Context) (
+	[]ComponentModel,
+	error,
+) {
+	var v []ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r componentToOrganizationFindMany) ExecInner(ctx context.Context) (
+	[]InnerComponent,
+	error,
+) {
+	var v []InnerComponent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r componentToOrganizationFindMany) Update(params ...ComponentSetParam) componentToOrganizationUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Component"
+
+	r.query.Outputs = countOutput
+
+	var v componentToOrganizationUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type componentToOrganizationUpdateMany struct {
+	query builder.Query
+}
+
+func (r componentToOrganizationUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToOrganizationUpdateMany) componentModel() {}
+
+func (r componentToOrganizationUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentToOrganizationUpdateMany) Tx() ComponentManyTxResult {
+	v := newComponentManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r componentToOrganizationFindMany) Delete() componentToOrganizationDeleteMany {
+	var v componentToOrganizationDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Component"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type componentToOrganizationDeleteMany struct {
+	query builder.Query
+}
+
+func (r componentToOrganizationDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p componentToOrganizationDeleteMany) componentModel() {}
+
+func (r componentToOrganizationDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentToOrganizationDeleteMany) Tx() ComponentManyTxResult {
+	v := newComponentManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type componentToTagsFindUnique struct {
+	query builder.Query
+}
+
+func (r componentToTagsFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToTagsFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToTagsFindUnique) with()              {}
+func (r componentToTagsFindUnique) componentModel()    {}
+func (r componentToTagsFindUnique) componentRelation() {}
+
+func (r componentToTagsFindUnique) With(params ...ComponentTagRelationWith) componentToTagsFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentToTagsFindUnique) Select(params ...componentPrismaFields) componentToTagsFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToTagsFindUnique) Omit(params ...componentPrismaFields) componentToTagsFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToTagsFindUnique) Exec(ctx context.Context) (
+	*ComponentModel,
+	error,
+) {
+	var v *ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentToTagsFindUnique) ExecInner(ctx context.Context) (
+	*InnerComponent,
+	error,
+) {
+	var v *InnerComponent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentToTagsFindUnique) Update(params ...ComponentSetParam) componentToTagsUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Component"
+
+	var v componentToTagsUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type componentToTagsUpdateUnique struct {
+	query builder.Query
+}
+
+func (r componentToTagsUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToTagsUpdateUnique) componentModel() {}
+
+func (r componentToTagsUpdateUnique) Exec(ctx context.Context) (*ComponentModel, error) {
+	var v ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentToTagsUpdateUnique) Tx() ComponentUniqueTxResult {
+	v := newComponentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r componentToTagsFindUnique) Delete() componentToTagsDeleteUnique {
+	var v componentToTagsDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Component"
+
+	return v
+}
+
+type componentToTagsDeleteUnique struct {
+	query builder.Query
+}
+
+func (r componentToTagsDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p componentToTagsDeleteUnique) componentModel() {}
+
+func (r componentToTagsDeleteUnique) Exec(ctx context.Context) (*ComponentModel, error) {
+	var v ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentToTagsDeleteUnique) Tx() ComponentUniqueTxResult {
+	v := newComponentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type componentToTagsFindFirst struct {
+	query builder.Query
+}
+
+func (r componentToTagsFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToTagsFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToTagsFindFirst) with()              {}
+func (r componentToTagsFindFirst) componentModel()    {}
+func (r componentToTagsFindFirst) componentRelation() {}
+
+func (r componentToTagsFindFirst) With(params ...ComponentTagRelationWith) componentToTagsFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentToTagsFindFirst) Select(params ...componentPrismaFields) componentToTagsFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToTagsFindFirst) Omit(params ...componentPrismaFields) componentToTagsFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToTagsFindFirst) OrderBy(params ...ComponentTagOrderByParam) componentToTagsFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r componentToTagsFindFirst) Skip(count int) componentToTagsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentToTagsFindFirst) Take(count int) componentToTagsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentToTagsFindFirst) Cursor(cursor ComponentCursorParam) componentToTagsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r componentToTagsFindFirst) Exec(ctx context.Context) (
+	*ComponentModel,
+	error,
+) {
+	var v *ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentToTagsFindFirst) ExecInner(ctx context.Context) (
+	*InnerComponent,
+	error,
+) {
+	var v *InnerComponent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type componentToTagsFindMany struct {
+	query builder.Query
+}
+
+func (r componentToTagsFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToTagsFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToTagsFindMany) with()              {}
+func (r componentToTagsFindMany) componentModel()    {}
+func (r componentToTagsFindMany) componentRelation() {}
+
+func (r componentToTagsFindMany) With(params ...ComponentTagRelationWith) componentToTagsFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentToTagsFindMany) Select(params ...componentPrismaFields) componentToTagsFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToTagsFindMany) Omit(params ...componentPrismaFields) componentToTagsFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToTagsFindMany) OrderBy(params ...ComponentTagOrderByParam) componentToTagsFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r componentToTagsFindMany) Skip(count int) componentToTagsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentToTagsFindMany) Take(count int) componentToTagsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentToTagsFindMany) Cursor(cursor ComponentCursorParam) componentToTagsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r componentToTagsFindMany) Exec(ctx context.Context) (
+	[]ComponentModel,
+	error,
+) {
+	var v []ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r componentToTagsFindMany) ExecInner(ctx context.Context) (
+	[]InnerComponent,
+	error,
+) {
+	var v []InnerComponent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r componentToTagsFindMany) Update(params ...ComponentSetParam) componentToTagsUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Component"
+
+	r.query.Outputs = countOutput
+
+	var v componentToTagsUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type componentToTagsUpdateMany struct {
+	query builder.Query
+}
+
+func (r componentToTagsUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToTagsUpdateMany) componentModel() {}
+
+func (r componentToTagsUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentToTagsUpdateMany) Tx() ComponentManyTxResult {
+	v := newComponentManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r componentToTagsFindMany) Delete() componentToTagsDeleteMany {
+	var v componentToTagsDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Component"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type componentToTagsDeleteMany struct {
+	query builder.Query
+}
+
+func (r componentToTagsDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p componentToTagsDeleteMany) componentModel() {}
+
+func (r componentToTagsDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentToTagsDeleteMany) Tx() ComponentManyTxResult {
+	v := newComponentManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type componentFindUnique struct {
+	query builder.Query
+}
+
+func (r componentFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentFindUnique) with()              {}
+func (r componentFindUnique) componentModel()    {}
+func (r componentFindUnique) componentRelation() {}
+
+func (r componentActions) FindUnique(
+	params ComponentEqualsUniqueWhereParam,
+) componentFindUnique {
+	var v componentFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "Component"
+	v.query.Outputs = componentOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r componentFindUnique) With(params ...ComponentRelationWith) componentFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentFindUnique) Select(params ...componentPrismaFields) componentFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentFindUnique) Omit(params ...componentPrismaFields) componentFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentFindUnique) Exec(ctx context.Context) (
+	*ComponentModel,
+	error,
+) {
+	var v *ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentFindUnique) ExecInner(ctx context.Context) (
+	*InnerComponent,
+	error,
+) {
+	var v *InnerComponent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentFindUnique) Update(params ...ComponentSetParam) componentUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Component"
+
+	var v componentUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type componentUpdateUnique struct {
+	query builder.Query
+}
+
+func (r componentUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentUpdateUnique) componentModel() {}
+
+func (r componentUpdateUnique) Exec(ctx context.Context) (*ComponentModel, error) {
+	var v ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentUpdateUnique) Tx() ComponentUniqueTxResult {
+	v := newComponentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r componentFindUnique) Delete() componentDeleteUnique {
+	var v componentDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Component"
+
+	return v
+}
+
+type componentDeleteUnique struct {
+	query builder.Query
+}
+
+func (r componentDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p componentDeleteUnique) componentModel() {}
+
+func (r componentDeleteUnique) Exec(ctx context.Context) (*ComponentModel, error) {
+	var v ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentDeleteUnique) Tx() ComponentUniqueTxResult {
+	v := newComponentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type componentFindFirst struct {
+	query builder.Query
+}
+
+func (r componentFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentFindFirst) with()              {}
+func (r componentFindFirst) componentModel()    {}
+func (r componentFindFirst) componentRelation() {}
+
+func (r componentActions) FindFirst(
+	params ...ComponentWhereParam,
+) componentFindFirst {
+	var v componentFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "Component"
+	v.query.Outputs = componentOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r componentFindFirst) With(params ...ComponentRelationWith) componentFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentFindFirst) Select(params ...componentPrismaFields) componentFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentFindFirst) Omit(params ...componentPrismaFields) componentFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentFindFirst) OrderBy(params ...ComponentOrderByParam) componentFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r componentFindFirst) Skip(count int) componentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentFindFirst) Take(count int) componentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentFindFirst) Cursor(cursor ComponentCursorParam) componentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r componentFindFirst) Exec(ctx context.Context) (
+	*ComponentModel,
+	error,
+) {
+	var v *ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentFindFirst) ExecInner(ctx context.Context) (
+	*InnerComponent,
+	error,
+) {
+	var v *InnerComponent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type componentFindMany struct {
+	query builder.Query
+}
+
+func (r componentFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentFindMany) with()              {}
+func (r componentFindMany) componentModel()    {}
+func (r componentFindMany) componentRelation() {}
+
+func (r componentActions) FindMany(
+	params ...ComponentWhereParam,
+) componentFindMany {
+	var v componentFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "Component"
+	v.query.Outputs = componentOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r componentFindMany) With(params ...ComponentRelationWith) componentFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentFindMany) Select(params ...componentPrismaFields) componentFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentFindMany) Omit(params ...componentPrismaFields) componentFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentFindMany) OrderBy(params ...ComponentOrderByParam) componentFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r componentFindMany) Skip(count int) componentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentFindMany) Take(count int) componentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentFindMany) Cursor(cursor ComponentCursorParam) componentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r componentFindMany) Exec(ctx context.Context) (
+	[]ComponentModel,
+	error,
+) {
+	var v []ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r componentFindMany) ExecInner(ctx context.Context) (
+	[]InnerComponent,
+	error,
+) {
+	var v []InnerComponent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r componentFindMany) Update(params ...ComponentSetParam) componentUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Component"
+
+	r.query.Outputs = countOutput
+
+	var v componentUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type componentUpdateMany struct {
+	query builder.Query
+}
+
+func (r componentUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentUpdateMany) componentModel() {}
+
+func (r componentUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentUpdateMany) Tx() ComponentManyTxResult {
+	v := newComponentManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r componentFindMany) Delete() componentDeleteMany {
+	var v componentDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Component"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type componentDeleteMany struct {
+	query builder.Query
+}
+
+func (r componentDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p componentDeleteMany) componentModel() {}
+
+func (r componentDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentDeleteMany) Tx() ComponentManyTxResult {
+	v := newComponentManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type componentTagToComponentFindUnique struct {
+	query builder.Query
+}
+
+func (r componentTagToComponentFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagToComponentFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagToComponentFindUnique) with()                 {}
+func (r componentTagToComponentFindUnique) componentTagModel()    {}
+func (r componentTagToComponentFindUnique) componentTagRelation() {}
+
+func (r componentTagToComponentFindUnique) With(params ...ComponentRelationWith) componentTagToComponentFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentTagToComponentFindUnique) Select(params ...componentTagPrismaFields) componentTagToComponentFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagToComponentFindUnique) Omit(params ...componentTagPrismaFields) componentTagToComponentFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentTagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagToComponentFindUnique) Exec(ctx context.Context) (
+	*ComponentTagModel,
+	error,
+) {
+	var v *ComponentTagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentTagToComponentFindUnique) ExecInner(ctx context.Context) (
+	*InnerComponentTag,
+	error,
+) {
+	var v *InnerComponentTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentTagToComponentFindUnique) Update(params ...ComponentTagSetParam) componentTagToComponentUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "ComponentTag"
+
+	var v componentTagToComponentUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type componentTagToComponentUpdateUnique struct {
+	query builder.Query
+}
+
+func (r componentTagToComponentUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagToComponentUpdateUnique) componentTagModel() {}
+
+func (r componentTagToComponentUpdateUnique) Exec(ctx context.Context) (*ComponentTagModel, error) {
+	var v ComponentTagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentTagToComponentUpdateUnique) Tx() ComponentTagUniqueTxResult {
+	v := newComponentTagUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r componentTagToComponentFindUnique) Delete() componentTagToComponentDeleteUnique {
+	var v componentTagToComponentDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "ComponentTag"
+
+	return v
+}
+
+type componentTagToComponentDeleteUnique struct {
+	query builder.Query
+}
+
+func (r componentTagToComponentDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p componentTagToComponentDeleteUnique) componentTagModel() {}
+
+func (r componentTagToComponentDeleteUnique) Exec(ctx context.Context) (*ComponentTagModel, error) {
+	var v ComponentTagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentTagToComponentDeleteUnique) Tx() ComponentTagUniqueTxResult {
+	v := newComponentTagUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type componentTagToComponentFindFirst struct {
+	query builder.Query
+}
+
+func (r componentTagToComponentFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagToComponentFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagToComponentFindFirst) with()                 {}
+func (r componentTagToComponentFindFirst) componentTagModel()    {}
+func (r componentTagToComponentFindFirst) componentTagRelation() {}
+
+func (r componentTagToComponentFindFirst) With(params ...ComponentRelationWith) componentTagToComponentFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentTagToComponentFindFirst) Select(params ...componentTagPrismaFields) componentTagToComponentFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagToComponentFindFirst) Omit(params ...componentTagPrismaFields) componentTagToComponentFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentTagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagToComponentFindFirst) OrderBy(params ...ComponentOrderByParam) componentTagToComponentFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r componentTagToComponentFindFirst) Skip(count int) componentTagToComponentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentTagToComponentFindFirst) Take(count int) componentTagToComponentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentTagToComponentFindFirst) Cursor(cursor ComponentTagCursorParam) componentTagToComponentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r componentTagToComponentFindFirst) Exec(ctx context.Context) (
+	*ComponentTagModel,
+	error,
+) {
+	var v *ComponentTagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentTagToComponentFindFirst) ExecInner(ctx context.Context) (
+	*InnerComponentTag,
+	error,
+) {
+	var v *InnerComponentTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type componentTagToComponentFindMany struct {
+	query builder.Query
+}
+
+func (r componentTagToComponentFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagToComponentFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagToComponentFindMany) with()                 {}
+func (r componentTagToComponentFindMany) componentTagModel()    {}
+func (r componentTagToComponentFindMany) componentTagRelation() {}
+
+func (r componentTagToComponentFindMany) With(params ...ComponentRelationWith) componentTagToComponentFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentTagToComponentFindMany) Select(params ...componentTagPrismaFields) componentTagToComponentFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagToComponentFindMany) Omit(params ...componentTagPrismaFields) componentTagToComponentFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentTagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagToComponentFindMany) OrderBy(params ...ComponentOrderByParam) componentTagToComponentFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r componentTagToComponentFindMany) Skip(count int) componentTagToComponentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentTagToComponentFindMany) Take(count int) componentTagToComponentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentTagToComponentFindMany) Cursor(cursor ComponentTagCursorParam) componentTagToComponentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r componentTagToComponentFindMany) Exec(ctx context.Context) (
+	[]ComponentTagModel,
+	error,
+) {
+	var v []ComponentTagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r componentTagToComponentFindMany) ExecInner(ctx context.Context) (
+	[]InnerComponentTag,
+	error,
+) {
+	var v []InnerComponentTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r componentTagToComponentFindMany) Update(params ...ComponentTagSetParam) componentTagToComponentUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "ComponentTag"
+
+	r.query.Outputs = countOutput
+
+	var v componentTagToComponentUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type componentTagToComponentUpdateMany struct {
+	query builder.Query
+}
+
+func (r componentTagToComponentUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagToComponentUpdateMany) componentTagModel() {}
+
+func (r componentTagToComponentUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentTagToComponentUpdateMany) Tx() ComponentTagManyTxResult {
+	v := newComponentTagManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r componentTagToComponentFindMany) Delete() componentTagToComponentDeleteMany {
+	var v componentTagToComponentDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "ComponentTag"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type componentTagToComponentDeleteMany struct {
+	query builder.Query
+}
+
+func (r componentTagToComponentDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p componentTagToComponentDeleteMany) componentTagModel() {}
+
+func (r componentTagToComponentDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentTagToComponentDeleteMany) Tx() ComponentTagManyTxResult {
+	v := newComponentTagManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type componentTagToTagFindUnique struct {
+	query builder.Query
+}
+
+func (r componentTagToTagFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagToTagFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagToTagFindUnique) with()                 {}
+func (r componentTagToTagFindUnique) componentTagModel()    {}
+func (r componentTagToTagFindUnique) componentTagRelation() {}
+
+func (r componentTagToTagFindUnique) With(params ...TagRelationWith) componentTagToTagFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentTagToTagFindUnique) Select(params ...componentTagPrismaFields) componentTagToTagFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagToTagFindUnique) Omit(params ...componentTagPrismaFields) componentTagToTagFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentTagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagToTagFindUnique) Exec(ctx context.Context) (
+	*ComponentTagModel,
+	error,
+) {
+	var v *ComponentTagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentTagToTagFindUnique) ExecInner(ctx context.Context) (
+	*InnerComponentTag,
+	error,
+) {
+	var v *InnerComponentTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentTagToTagFindUnique) Update(params ...ComponentTagSetParam) componentTagToTagUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "ComponentTag"
+
+	var v componentTagToTagUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type componentTagToTagUpdateUnique struct {
+	query builder.Query
+}
+
+func (r componentTagToTagUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagToTagUpdateUnique) componentTagModel() {}
+
+func (r componentTagToTagUpdateUnique) Exec(ctx context.Context) (*ComponentTagModel, error) {
+	var v ComponentTagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentTagToTagUpdateUnique) Tx() ComponentTagUniqueTxResult {
+	v := newComponentTagUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r componentTagToTagFindUnique) Delete() componentTagToTagDeleteUnique {
+	var v componentTagToTagDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "ComponentTag"
+
+	return v
+}
+
+type componentTagToTagDeleteUnique struct {
+	query builder.Query
+}
+
+func (r componentTagToTagDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p componentTagToTagDeleteUnique) componentTagModel() {}
+
+func (r componentTagToTagDeleteUnique) Exec(ctx context.Context) (*ComponentTagModel, error) {
+	var v ComponentTagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentTagToTagDeleteUnique) Tx() ComponentTagUniqueTxResult {
+	v := newComponentTagUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type componentTagToTagFindFirst struct {
+	query builder.Query
+}
+
+func (r componentTagToTagFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagToTagFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagToTagFindFirst) with()                 {}
+func (r componentTagToTagFindFirst) componentTagModel()    {}
+func (r componentTagToTagFindFirst) componentTagRelation() {}
+
+func (r componentTagToTagFindFirst) With(params ...TagRelationWith) componentTagToTagFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentTagToTagFindFirst) Select(params ...componentTagPrismaFields) componentTagToTagFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagToTagFindFirst) Omit(params ...componentTagPrismaFields) componentTagToTagFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentTagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagToTagFindFirst) OrderBy(params ...TagOrderByParam) componentTagToTagFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r componentTagToTagFindFirst) Skip(count int) componentTagToTagFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentTagToTagFindFirst) Take(count int) componentTagToTagFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentTagToTagFindFirst) Cursor(cursor ComponentTagCursorParam) componentTagToTagFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r componentTagToTagFindFirst) Exec(ctx context.Context) (
+	*ComponentTagModel,
+	error,
+) {
+	var v *ComponentTagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentTagToTagFindFirst) ExecInner(ctx context.Context) (
+	*InnerComponentTag,
+	error,
+) {
+	var v *InnerComponentTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type componentTagToTagFindMany struct {
+	query builder.Query
+}
+
+func (r componentTagToTagFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagToTagFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagToTagFindMany) with()                 {}
+func (r componentTagToTagFindMany) componentTagModel()    {}
+func (r componentTagToTagFindMany) componentTagRelation() {}
+
+func (r componentTagToTagFindMany) With(params ...TagRelationWith) componentTagToTagFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentTagToTagFindMany) Select(params ...componentTagPrismaFields) componentTagToTagFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagToTagFindMany) Omit(params ...componentTagPrismaFields) componentTagToTagFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentTagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagToTagFindMany) OrderBy(params ...TagOrderByParam) componentTagToTagFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r componentTagToTagFindMany) Skip(count int) componentTagToTagFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentTagToTagFindMany) Take(count int) componentTagToTagFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentTagToTagFindMany) Cursor(cursor ComponentTagCursorParam) componentTagToTagFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r componentTagToTagFindMany) Exec(ctx context.Context) (
+	[]ComponentTagModel,
+	error,
+) {
+	var v []ComponentTagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r componentTagToTagFindMany) ExecInner(ctx context.Context) (
+	[]InnerComponentTag,
+	error,
+) {
+	var v []InnerComponentTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r componentTagToTagFindMany) Update(params ...ComponentTagSetParam) componentTagToTagUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "ComponentTag"
+
+	r.query.Outputs = countOutput
+
+	var v componentTagToTagUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type componentTagToTagUpdateMany struct {
+	query builder.Query
+}
+
+func (r componentTagToTagUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagToTagUpdateMany) componentTagModel() {}
+
+func (r componentTagToTagUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentTagToTagUpdateMany) Tx() ComponentTagManyTxResult {
+	v := newComponentTagManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r componentTagToTagFindMany) Delete() componentTagToTagDeleteMany {
+	var v componentTagToTagDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "ComponentTag"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type componentTagToTagDeleteMany struct {
+	query builder.Query
+}
+
+func (r componentTagToTagDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p componentTagToTagDeleteMany) componentTagModel() {}
+
+func (r componentTagToTagDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentTagToTagDeleteMany) Tx() ComponentTagManyTxResult {
+	v := newComponentTagManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type componentTagFindUnique struct {
+	query builder.Query
+}
+
+func (r componentTagFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagFindUnique) with()                 {}
+func (r componentTagFindUnique) componentTagModel()    {}
+func (r componentTagFindUnique) componentTagRelation() {}
+
+func (r componentTagActions) FindUnique(
+	params ComponentTagEqualsUniqueWhereParam,
+) componentTagFindUnique {
+	var v componentTagFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "ComponentTag"
+	v.query.Outputs = componentTagOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r componentTagFindUnique) With(params ...ComponentTagRelationWith) componentTagFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentTagFindUnique) Select(params ...componentTagPrismaFields) componentTagFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagFindUnique) Omit(params ...componentTagPrismaFields) componentTagFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentTagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagFindUnique) Exec(ctx context.Context) (
+	*ComponentTagModel,
+	error,
+) {
+	var v *ComponentTagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentTagFindUnique) ExecInner(ctx context.Context) (
+	*InnerComponentTag,
+	error,
+) {
+	var v *InnerComponentTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentTagFindUnique) Update(params ...ComponentTagSetParam) componentTagUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "ComponentTag"
+
+	var v componentTagUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type componentTagUpdateUnique struct {
+	query builder.Query
+}
+
+func (r componentTagUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagUpdateUnique) componentTagModel() {}
+
+func (r componentTagUpdateUnique) Exec(ctx context.Context) (*ComponentTagModel, error) {
+	var v ComponentTagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentTagUpdateUnique) Tx() ComponentTagUniqueTxResult {
+	v := newComponentTagUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r componentTagFindUnique) Delete() componentTagDeleteUnique {
+	var v componentTagDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "ComponentTag"
+
+	return v
+}
+
+type componentTagDeleteUnique struct {
+	query builder.Query
+}
+
+func (r componentTagDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p componentTagDeleteUnique) componentTagModel() {}
+
+func (r componentTagDeleteUnique) Exec(ctx context.Context) (*ComponentTagModel, error) {
+	var v ComponentTagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentTagDeleteUnique) Tx() ComponentTagUniqueTxResult {
+	v := newComponentTagUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type componentTagFindFirst struct {
+	query builder.Query
+}
+
+func (r componentTagFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagFindFirst) with()                 {}
+func (r componentTagFindFirst) componentTagModel()    {}
+func (r componentTagFindFirst) componentTagRelation() {}
+
+func (r componentTagActions) FindFirst(
+	params ...ComponentTagWhereParam,
+) componentTagFindFirst {
+	var v componentTagFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "ComponentTag"
+	v.query.Outputs = componentTagOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r componentTagFindFirst) With(params ...ComponentTagRelationWith) componentTagFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentTagFindFirst) Select(params ...componentTagPrismaFields) componentTagFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagFindFirst) Omit(params ...componentTagPrismaFields) componentTagFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentTagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagFindFirst) OrderBy(params ...ComponentTagOrderByParam) componentTagFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r componentTagFindFirst) Skip(count int) componentTagFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentTagFindFirst) Take(count int) componentTagFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentTagFindFirst) Cursor(cursor ComponentTagCursorParam) componentTagFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r componentTagFindFirst) Exec(ctx context.Context) (
+	*ComponentTagModel,
+	error,
+) {
+	var v *ComponentTagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentTagFindFirst) ExecInner(ctx context.Context) (
+	*InnerComponentTag,
+	error,
+) {
+	var v *InnerComponentTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type componentTagFindMany struct {
+	query builder.Query
+}
+
+func (r componentTagFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagFindMany) with()                 {}
+func (r componentTagFindMany) componentTagModel()    {}
+func (r componentTagFindMany) componentTagRelation() {}
+
+func (r componentTagActions) FindMany(
+	params ...ComponentTagWhereParam,
+) componentTagFindMany {
+	var v componentTagFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "ComponentTag"
+	v.query.Outputs = componentTagOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r componentTagFindMany) With(params ...ComponentTagRelationWith) componentTagFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentTagFindMany) Select(params ...componentTagPrismaFields) componentTagFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagFindMany) Omit(params ...componentTagPrismaFields) componentTagFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentTagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentTagFindMany) OrderBy(params ...ComponentTagOrderByParam) componentTagFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r componentTagFindMany) Skip(count int) componentTagFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentTagFindMany) Take(count int) componentTagFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentTagFindMany) Cursor(cursor ComponentTagCursorParam) componentTagFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r componentTagFindMany) Exec(ctx context.Context) (
+	[]ComponentTagModel,
+	error,
+) {
+	var v []ComponentTagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r componentTagFindMany) ExecInner(ctx context.Context) (
+	[]InnerComponentTag,
+	error,
+) {
+	var v []InnerComponentTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r componentTagFindMany) Update(params ...ComponentTagSetParam) componentTagUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "ComponentTag"
+
+	r.query.Outputs = countOutput
+
+	var v componentTagUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type componentTagUpdateMany struct {
+	query builder.Query
+}
+
+func (r componentTagUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagUpdateMany) componentTagModel() {}
+
+func (r componentTagUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentTagUpdateMany) Tx() ComponentTagManyTxResult {
+	v := newComponentTagManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r componentTagFindMany) Delete() componentTagDeleteMany {
+	var v componentTagDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "ComponentTag"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type componentTagDeleteMany struct {
+	query builder.Query
+}
+
+func (r componentTagDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p componentTagDeleteMany) componentTagModel() {}
+
+func (r componentTagDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentTagDeleteMany) Tx() ComponentTagManyTxResult {
+	v := newComponentTagManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tagToOrganizationFindUnique struct {
+	query builder.Query
+}
+
+func (r tagToOrganizationFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tagToOrganizationFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tagToOrganizationFindUnique) with()        {}
+func (r tagToOrganizationFindUnique) tagModel()    {}
+func (r tagToOrganizationFindUnique) tagRelation() {}
+
+func (r tagToOrganizationFindUnique) With(params ...OrganizationRelationWith) tagToOrganizationFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tagToOrganizationFindUnique) Select(params ...tagPrismaFields) tagToOrganizationFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagToOrganizationFindUnique) Omit(params ...tagPrismaFields) tagToOrganizationFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagToOrganizationFindUnique) Exec(ctx context.Context) (
+	*TagModel,
+	error,
+) {
+	var v *TagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tagToOrganizationFindUnique) ExecInner(ctx context.Context) (
+	*InnerTag,
+	error,
+) {
+	var v *InnerTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tagToOrganizationFindUnique) Update(params ...TagSetParam) tagToOrganizationUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Tag"
+
+	var v tagToOrganizationUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tagToOrganizationUpdateUnique struct {
+	query builder.Query
+}
+
+func (r tagToOrganizationUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tagToOrganizationUpdateUnique) tagModel() {}
+
+func (r tagToOrganizationUpdateUnique) Exec(ctx context.Context) (*TagModel, error) {
+	var v TagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tagToOrganizationUpdateUnique) Tx() TagUniqueTxResult {
+	v := newTagUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tagToOrganizationFindUnique) Delete() tagToOrganizationDeleteUnique {
+	var v tagToOrganizationDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Tag"
+
+	return v
+}
+
+type tagToOrganizationDeleteUnique struct {
+	query builder.Query
+}
+
+func (r tagToOrganizationDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tagToOrganizationDeleteUnique) tagModel() {}
+
+func (r tagToOrganizationDeleteUnique) Exec(ctx context.Context) (*TagModel, error) {
+	var v TagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tagToOrganizationDeleteUnique) Tx() TagUniqueTxResult {
+	v := newTagUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tagToOrganizationFindFirst struct {
+	query builder.Query
+}
+
+func (r tagToOrganizationFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tagToOrganizationFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tagToOrganizationFindFirst) with()        {}
+func (r tagToOrganizationFindFirst) tagModel()    {}
+func (r tagToOrganizationFindFirst) tagRelation() {}
+
+func (r tagToOrganizationFindFirst) With(params ...OrganizationRelationWith) tagToOrganizationFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tagToOrganizationFindFirst) Select(params ...tagPrismaFields) tagToOrganizationFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagToOrganizationFindFirst) Omit(params ...tagPrismaFields) tagToOrganizationFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagToOrganizationFindFirst) OrderBy(params ...OrganizationOrderByParam) tagToOrganizationFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tagToOrganizationFindFirst) Skip(count int) tagToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tagToOrganizationFindFirst) Take(count int) tagToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tagToOrganizationFindFirst) Cursor(cursor TagCursorParam) tagToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tagToOrganizationFindFirst) Exec(ctx context.Context) (
+	*TagModel,
+	error,
+) {
+	var v *TagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tagToOrganizationFindFirst) ExecInner(ctx context.Context) (
+	*InnerTag,
+	error,
+) {
+	var v *InnerTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type tagToOrganizationFindMany struct {
+	query builder.Query
+}
+
+func (r tagToOrganizationFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tagToOrganizationFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tagToOrganizationFindMany) with()        {}
+func (r tagToOrganizationFindMany) tagModel()    {}
+func (r tagToOrganizationFindMany) tagRelation() {}
+
+func (r tagToOrganizationFindMany) With(params ...OrganizationRelationWith) tagToOrganizationFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tagToOrganizationFindMany) Select(params ...tagPrismaFields) tagToOrganizationFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagToOrganizationFindMany) Omit(params ...tagPrismaFields) tagToOrganizationFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagToOrganizationFindMany) OrderBy(params ...OrganizationOrderByParam) tagToOrganizationFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tagToOrganizationFindMany) Skip(count int) tagToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tagToOrganizationFindMany) Take(count int) tagToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tagToOrganizationFindMany) Cursor(cursor TagCursorParam) tagToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tagToOrganizationFindMany) Exec(ctx context.Context) (
+	[]TagModel,
+	error,
+) {
+	var v []TagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tagToOrganizationFindMany) ExecInner(ctx context.Context) (
+	[]InnerTag,
+	error,
+) {
+	var v []InnerTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tagToOrganizationFindMany) Update(params ...TagSetParam) tagToOrganizationUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Tag"
+
+	r.query.Outputs = countOutput
+
+	var v tagToOrganizationUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tagToOrganizationUpdateMany struct {
+	query builder.Query
+}
+
+func (r tagToOrganizationUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tagToOrganizationUpdateMany) tagModel() {}
+
+func (r tagToOrganizationUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tagToOrganizationUpdateMany) Tx() TagManyTxResult {
+	v := newTagManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tagToOrganizationFindMany) Delete() tagToOrganizationDeleteMany {
+	var v tagToOrganizationDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Tag"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type tagToOrganizationDeleteMany struct {
+	query builder.Query
+}
+
+func (r tagToOrganizationDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tagToOrganizationDeleteMany) tagModel() {}
+
+func (r tagToOrganizationDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tagToOrganizationDeleteMany) Tx() TagManyTxResult {
+	v := newTagManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tagToComponentTagFindUnique struct {
+	query builder.Query
+}
+
+func (r tagToComponentTagFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tagToComponentTagFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tagToComponentTagFindUnique) with()        {}
+func (r tagToComponentTagFindUnique) tagModel()    {}
+func (r tagToComponentTagFindUnique) tagRelation() {}
+
+func (r tagToComponentTagFindUnique) With(params ...ComponentTagRelationWith) tagToComponentTagFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tagToComponentTagFindUnique) Select(params ...tagPrismaFields) tagToComponentTagFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagToComponentTagFindUnique) Omit(params ...tagPrismaFields) tagToComponentTagFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagToComponentTagFindUnique) Exec(ctx context.Context) (
+	*TagModel,
+	error,
+) {
+	var v *TagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tagToComponentTagFindUnique) ExecInner(ctx context.Context) (
+	*InnerTag,
+	error,
+) {
+	var v *InnerTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tagToComponentTagFindUnique) Update(params ...TagSetParam) tagToComponentTagUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Tag"
+
+	var v tagToComponentTagUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tagToComponentTagUpdateUnique struct {
+	query builder.Query
+}
+
+func (r tagToComponentTagUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tagToComponentTagUpdateUnique) tagModel() {}
+
+func (r tagToComponentTagUpdateUnique) Exec(ctx context.Context) (*TagModel, error) {
+	var v TagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tagToComponentTagUpdateUnique) Tx() TagUniqueTxResult {
+	v := newTagUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tagToComponentTagFindUnique) Delete() tagToComponentTagDeleteUnique {
+	var v tagToComponentTagDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Tag"
+
+	return v
+}
+
+type tagToComponentTagDeleteUnique struct {
+	query builder.Query
+}
+
+func (r tagToComponentTagDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tagToComponentTagDeleteUnique) tagModel() {}
+
+func (r tagToComponentTagDeleteUnique) Exec(ctx context.Context) (*TagModel, error) {
+	var v TagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tagToComponentTagDeleteUnique) Tx() TagUniqueTxResult {
+	v := newTagUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tagToComponentTagFindFirst struct {
+	query builder.Query
+}
+
+func (r tagToComponentTagFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tagToComponentTagFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tagToComponentTagFindFirst) with()        {}
+func (r tagToComponentTagFindFirst) tagModel()    {}
+func (r tagToComponentTagFindFirst) tagRelation() {}
+
+func (r tagToComponentTagFindFirst) With(params ...ComponentTagRelationWith) tagToComponentTagFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tagToComponentTagFindFirst) Select(params ...tagPrismaFields) tagToComponentTagFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagToComponentTagFindFirst) Omit(params ...tagPrismaFields) tagToComponentTagFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagToComponentTagFindFirst) OrderBy(params ...ComponentTagOrderByParam) tagToComponentTagFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tagToComponentTagFindFirst) Skip(count int) tagToComponentTagFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tagToComponentTagFindFirst) Take(count int) tagToComponentTagFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tagToComponentTagFindFirst) Cursor(cursor TagCursorParam) tagToComponentTagFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tagToComponentTagFindFirst) Exec(ctx context.Context) (
+	*TagModel,
+	error,
+) {
+	var v *TagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tagToComponentTagFindFirst) ExecInner(ctx context.Context) (
+	*InnerTag,
+	error,
+) {
+	var v *InnerTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type tagToComponentTagFindMany struct {
+	query builder.Query
+}
+
+func (r tagToComponentTagFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tagToComponentTagFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tagToComponentTagFindMany) with()        {}
+func (r tagToComponentTagFindMany) tagModel()    {}
+func (r tagToComponentTagFindMany) tagRelation() {}
+
+func (r tagToComponentTagFindMany) With(params ...ComponentTagRelationWith) tagToComponentTagFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tagToComponentTagFindMany) Select(params ...tagPrismaFields) tagToComponentTagFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagToComponentTagFindMany) Omit(params ...tagPrismaFields) tagToComponentTagFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagToComponentTagFindMany) OrderBy(params ...ComponentTagOrderByParam) tagToComponentTagFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tagToComponentTagFindMany) Skip(count int) tagToComponentTagFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tagToComponentTagFindMany) Take(count int) tagToComponentTagFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tagToComponentTagFindMany) Cursor(cursor TagCursorParam) tagToComponentTagFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tagToComponentTagFindMany) Exec(ctx context.Context) (
+	[]TagModel,
+	error,
+) {
+	var v []TagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tagToComponentTagFindMany) ExecInner(ctx context.Context) (
+	[]InnerTag,
+	error,
+) {
+	var v []InnerTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tagToComponentTagFindMany) Update(params ...TagSetParam) tagToComponentTagUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Tag"
+
+	r.query.Outputs = countOutput
+
+	var v tagToComponentTagUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tagToComponentTagUpdateMany struct {
+	query builder.Query
+}
+
+func (r tagToComponentTagUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tagToComponentTagUpdateMany) tagModel() {}
+
+func (r tagToComponentTagUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tagToComponentTagUpdateMany) Tx() TagManyTxResult {
+	v := newTagManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tagToComponentTagFindMany) Delete() tagToComponentTagDeleteMany {
+	var v tagToComponentTagDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Tag"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type tagToComponentTagDeleteMany struct {
+	query builder.Query
+}
+
+func (r tagToComponentTagDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tagToComponentTagDeleteMany) tagModel() {}
+
+func (r tagToComponentTagDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tagToComponentTagDeleteMany) Tx() TagManyTxResult {
+	v := newTagManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tagFindUnique struct {
+	query builder.Query
+}
+
+func (r tagFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tagFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tagFindUnique) with()        {}
+func (r tagFindUnique) tagModel()    {}
+func (r tagFindUnique) tagRelation() {}
+
+func (r tagActions) FindUnique(
+	params TagEqualsUniqueWhereParam,
+) tagFindUnique {
+	var v tagFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "Tag"
+	v.query.Outputs = tagOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r tagFindUnique) With(params ...TagRelationWith) tagFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tagFindUnique) Select(params ...tagPrismaFields) tagFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagFindUnique) Omit(params ...tagPrismaFields) tagFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagFindUnique) Exec(ctx context.Context) (
+	*TagModel,
+	error,
+) {
+	var v *TagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tagFindUnique) ExecInner(ctx context.Context) (
+	*InnerTag,
+	error,
+) {
+	var v *InnerTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tagFindUnique) Update(params ...TagSetParam) tagUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Tag"
+
+	var v tagUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tagUpdateUnique struct {
+	query builder.Query
+}
+
+func (r tagUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tagUpdateUnique) tagModel() {}
+
+func (r tagUpdateUnique) Exec(ctx context.Context) (*TagModel, error) {
+	var v TagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tagUpdateUnique) Tx() TagUniqueTxResult {
+	v := newTagUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tagFindUnique) Delete() tagDeleteUnique {
+	var v tagDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Tag"
+
+	return v
+}
+
+type tagDeleteUnique struct {
+	query builder.Query
+}
+
+func (r tagDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tagDeleteUnique) tagModel() {}
+
+func (r tagDeleteUnique) Exec(ctx context.Context) (*TagModel, error) {
+	var v TagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tagDeleteUnique) Tx() TagUniqueTxResult {
+	v := newTagUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tagFindFirst struct {
+	query builder.Query
+}
+
+func (r tagFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tagFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tagFindFirst) with()        {}
+func (r tagFindFirst) tagModel()    {}
+func (r tagFindFirst) tagRelation() {}
+
+func (r tagActions) FindFirst(
+	params ...TagWhereParam,
+) tagFindFirst {
+	var v tagFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "Tag"
+	v.query.Outputs = tagOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r tagFindFirst) With(params ...TagRelationWith) tagFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tagFindFirst) Select(params ...tagPrismaFields) tagFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagFindFirst) Omit(params ...tagPrismaFields) tagFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagFindFirst) OrderBy(params ...TagOrderByParam) tagFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tagFindFirst) Skip(count int) tagFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tagFindFirst) Take(count int) tagFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tagFindFirst) Cursor(cursor TagCursorParam) tagFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tagFindFirst) Exec(ctx context.Context) (
+	*TagModel,
+	error,
+) {
+	var v *TagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tagFindFirst) ExecInner(ctx context.Context) (
+	*InnerTag,
+	error,
+) {
+	var v *InnerTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type tagFindMany struct {
+	query builder.Query
+}
+
+func (r tagFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tagFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tagFindMany) with()        {}
+func (r tagFindMany) tagModel()    {}
+func (r tagFindMany) tagRelation() {}
+
+func (r tagActions) FindMany(
+	params ...TagWhereParam,
+) tagFindMany {
+	var v tagFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "Tag"
+	v.query.Outputs = tagOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r tagFindMany) With(params ...TagRelationWith) tagFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tagFindMany) Select(params ...tagPrismaFields) tagFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagFindMany) Omit(params ...tagPrismaFields) tagFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tagOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tagFindMany) OrderBy(params ...TagOrderByParam) tagFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tagFindMany) Skip(count int) tagFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tagFindMany) Take(count int) tagFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tagFindMany) Cursor(cursor TagCursorParam) tagFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tagFindMany) Exec(ctx context.Context) (
+	[]TagModel,
+	error,
+) {
+	var v []TagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tagFindMany) ExecInner(ctx context.Context) (
+	[]InnerTag,
+	error,
+) {
+	var v []InnerTag
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tagFindMany) Update(params ...TagSetParam) tagUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Tag"
+
+	r.query.Outputs = countOutput
+
+	var v tagUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tagUpdateMany struct {
+	query builder.Query
+}
+
+func (r tagUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tagUpdateMany) tagModel() {}
+
+func (r tagUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tagUpdateMany) Tx() TagManyTxResult {
+	v := newTagManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tagFindMany) Delete() tagDeleteMany {
+	var v tagDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Tag"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type tagDeleteMany struct {
+	query builder.Query
+}
+
+func (r tagDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tagDeleteMany) tagModel() {}
+
+func (r tagDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tagDeleteMany) Tx() TagManyTxResult {
+	v := newTagManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type documentToOrganizationFindUnique struct {
+	query builder.Query
+}
+
+func (r documentToOrganizationFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentToOrganizationFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentToOrganizationFindUnique) with()             {}
+func (r documentToOrganizationFindUnique) documentModel()    {}
+func (r documentToOrganizationFindUnique) documentRelation() {}
+
+func (r documentToOrganizationFindUnique) With(params ...OrganizationRelationWith) documentToOrganizationFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentToOrganizationFindUnique) Select(params ...documentPrismaFields) documentToOrganizationFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentToOrganizationFindUnique) Omit(params ...documentPrismaFields) documentToOrganizationFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentToOrganizationFindUnique) Exec(ctx context.Context) (
+	*DocumentModel,
+	error,
+) {
+	var v *DocumentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentToOrganizationFindUnique) ExecInner(ctx context.Context) (
+	*InnerDocument,
+	error,
+) {
+	var v *InnerDocument
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentToOrganizationFindUnique) Update(params ...DocumentSetParam) documentToOrganizationUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Document"
+
+	var v documentToOrganizationUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type documentToOrganizationUpdateUnique struct {
+	query builder.Query
+}
+
+func (r documentToOrganizationUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentToOrganizationUpdateUnique) documentModel() {}
+
+func (r documentToOrganizationUpdateUnique) Exec(ctx context.Context) (*DocumentModel, error) {
+	var v DocumentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentToOrganizationUpdateUnique) Tx() DocumentUniqueTxResult {
+	v := newDocumentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r documentToOrganizationFindUnique) Delete() documentToOrganizationDeleteUnique {
+	var v documentToOrganizationDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Document"
+
+	return v
+}
+
+type documentToOrganizationDeleteUnique struct {
+	query builder.Query
+}
+
+func (r documentToOrganizationDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p documentToOrganizationDeleteUnique) documentModel() {}
+
+func (r documentToOrganizationDeleteUnique) Exec(ctx context.Context) (*DocumentModel, error) {
+	var v DocumentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentToOrganizationDeleteUnique) Tx() DocumentUniqueTxResult {
+	v := newDocumentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type documentToOrganizationFindFirst struct {
+	query builder.Query
+}
+
+func (r documentToOrganizationFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentToOrganizationFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentToOrganizationFindFirst) with()             {}
+func (r documentToOrganizationFindFirst) documentModel()    {}
+func (r documentToOrganizationFindFirst) documentRelation() {}
+
+func (r documentToOrganizationFindFirst) With(params ...OrganizationRelationWith) documentToOrganizationFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentToOrganizationFindFirst) Select(params ...documentPrismaFields) documentToOrganizationFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentToOrganizationFindFirst) Omit(params ...documentPrismaFields) documentToOrganizationFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentToOrganizationFindFirst) OrderBy(params ...OrganizationOrderByParam) documentToOrganizationFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r documentToOrganizationFindFirst) Skip(count int) documentToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentToOrganizationFindFirst) Take(count int) documentToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentToOrganizationFindFirst) Cursor(cursor DocumentCursorParam) documentToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r documentToOrganizationFindFirst) Exec(ctx context.Context) (
+	*DocumentModel,
+	error,
+) {
+	var v *DocumentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentToOrganizationFindFirst) ExecInner(ctx context.Context) (
+	*InnerDocument,
+	error,
+) {
+	var v *InnerDocument
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type documentToOrganizationFindMany struct {
+	query builder.Query
+}
+
+func (r documentToOrganizationFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentToOrganizationFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentToOrganizationFindMany) with()             {}
+func (r documentToOrganizationFindMany) documentModel()    {}
+func (r documentToOrganizationFindMany) documentRelation() {}
+
+func (r documentToOrganizationFindMany) With(params ...OrganizationRelationWith) documentToOrganizationFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentToOrganizationFindMany) Select(params ...documentPrismaFields) documentToOrganizationFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentToOrganizationFindMany) Omit(params ...documentPrismaFields) documentToOrganizationFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentToOrganizationFindMany) OrderBy(params ...OrganizationOrderByParam) documentToOrganizationFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r documentToOrganizationFindMany) Skip(count int) documentToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentToOrganizationFindMany) Take(count int) documentToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentToOrganizationFindMany) Cursor(cursor DocumentCursorParam) documentToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r documentToOrganizationFindMany) Exec(ctx context.Context) (
+	[]DocumentModel,
+	error,
+) {
+	var v []DocumentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r documentToOrganizationFindMany) ExecInner(ctx context.Context) (
+	[]InnerDocument,
+	error,
+) {
+	var v []InnerDocument
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r documentToOrganizationFindMany) Update(params ...DocumentSetParam) documentToOrganizationUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Document"
+
+	r.query.Outputs = countOutput
+
+	var v documentToOrganizationUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type documentToOrganizationUpdateMany struct {
+	query builder.Query
+}
+
+func (r documentToOrganizationUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentToOrganizationUpdateMany) documentModel() {}
+
+func (r documentToOrganizationUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentToOrganizationUpdateMany) Tx() DocumentManyTxResult {
+	v := newDocumentManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r documentToOrganizationFindMany) Delete() documentToOrganizationDeleteMany {
+	var v documentToOrganizationDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Document"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type documentToOrganizationDeleteMany struct {
+	query builder.Query
+}
+
+func (r documentToOrganizationDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p documentToOrganizationDeleteMany) documentModel() {}
+
+func (r documentToOrganizationDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentToOrganizationDeleteMany) Tx() DocumentManyTxResult {
+	v := newDocumentManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type documentToBlocksFindUnique struct {
+	query builder.Query
+}
+
+func (r documentToBlocksFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentToBlocksFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentToBlocksFindUnique) with()             {}
+func (r documentToBlocksFindUnique) documentModel()    {}
+func (r documentToBlocksFindUnique) documentRelation() {}
+
+func (r documentToBlocksFindUnique) With(params ...DocumentBlockRelationWith) documentToBlocksFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentToBlocksFindUnique) Select(params ...documentPrismaFields) documentToBlocksFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentToBlocksFindUnique) Omit(params ...documentPrismaFields) documentToBlocksFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentToBlocksFindUnique) Exec(ctx context.Context) (
+	*DocumentModel,
+	error,
+) {
+	var v *DocumentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentToBlocksFindUnique) ExecInner(ctx context.Context) (
+	*InnerDocument,
+	error,
+) {
+	var v *InnerDocument
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentToBlocksFindUnique) Update(params ...DocumentSetParam) documentToBlocksUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Document"
+
+	var v documentToBlocksUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type documentToBlocksUpdateUnique struct {
+	query builder.Query
+}
+
+func (r documentToBlocksUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentToBlocksUpdateUnique) documentModel() {}
+
+func (r documentToBlocksUpdateUnique) Exec(ctx context.Context) (*DocumentModel, error) {
+	var v DocumentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentToBlocksUpdateUnique) Tx() DocumentUniqueTxResult {
+	v := newDocumentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r documentToBlocksFindUnique) Delete() documentToBlocksDeleteUnique {
+	var v documentToBlocksDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Document"
+
+	return v
+}
+
+type documentToBlocksDeleteUnique struct {
+	query builder.Query
+}
+
+func (r documentToBlocksDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p documentToBlocksDeleteUnique) documentModel() {}
+
+func (r documentToBlocksDeleteUnique) Exec(ctx context.Context) (*DocumentModel, error) {
+	var v DocumentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentToBlocksDeleteUnique) Tx() DocumentUniqueTxResult {
+	v := newDocumentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type documentToBlocksFindFirst struct {
+	query builder.Query
+}
+
+func (r documentToBlocksFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentToBlocksFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentToBlocksFindFirst) with()             {}
+func (r documentToBlocksFindFirst) documentModel()    {}
+func (r documentToBlocksFindFirst) documentRelation() {}
+
+func (r documentToBlocksFindFirst) With(params ...DocumentBlockRelationWith) documentToBlocksFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentToBlocksFindFirst) Select(params ...documentPrismaFields) documentToBlocksFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentToBlocksFindFirst) Omit(params ...documentPrismaFields) documentToBlocksFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentToBlocksFindFirst) OrderBy(params ...DocumentBlockOrderByParam) documentToBlocksFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r documentToBlocksFindFirst) Skip(count int) documentToBlocksFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentToBlocksFindFirst) Take(count int) documentToBlocksFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentToBlocksFindFirst) Cursor(cursor DocumentCursorParam) documentToBlocksFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r documentToBlocksFindFirst) Exec(ctx context.Context) (
+	*DocumentModel,
+	error,
+) {
+	var v *DocumentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentToBlocksFindFirst) ExecInner(ctx context.Context) (
+	*InnerDocument,
+	error,
+) {
+	var v *InnerDocument
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type documentToBlocksFindMany struct {
+	query builder.Query
+}
+
+func (r documentToBlocksFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentToBlocksFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentToBlocksFindMany) with()             {}
+func (r documentToBlocksFindMany) documentModel()    {}
+func (r documentToBlocksFindMany) documentRelation() {}
+
+func (r documentToBlocksFindMany) With(params ...DocumentBlockRelationWith) documentToBlocksFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentToBlocksFindMany) Select(params ...documentPrismaFields) documentToBlocksFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentToBlocksFindMany) Omit(params ...documentPrismaFields) documentToBlocksFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentToBlocksFindMany) OrderBy(params ...DocumentBlockOrderByParam) documentToBlocksFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r documentToBlocksFindMany) Skip(count int) documentToBlocksFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentToBlocksFindMany) Take(count int) documentToBlocksFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentToBlocksFindMany) Cursor(cursor DocumentCursorParam) documentToBlocksFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r documentToBlocksFindMany) Exec(ctx context.Context) (
+	[]DocumentModel,
+	error,
+) {
+	var v []DocumentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r documentToBlocksFindMany) ExecInner(ctx context.Context) (
+	[]InnerDocument,
+	error,
+) {
+	var v []InnerDocument
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r documentToBlocksFindMany) Update(params ...DocumentSetParam) documentToBlocksUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Document"
+
+	r.query.Outputs = countOutput
+
+	var v documentToBlocksUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type documentToBlocksUpdateMany struct {
+	query builder.Query
+}
+
+func (r documentToBlocksUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentToBlocksUpdateMany) documentModel() {}
+
+func (r documentToBlocksUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentToBlocksUpdateMany) Tx() DocumentManyTxResult {
+	v := newDocumentManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r documentToBlocksFindMany) Delete() documentToBlocksDeleteMany {
+	var v documentToBlocksDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Document"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type documentToBlocksDeleteMany struct {
+	query builder.Query
+}
+
+func (r documentToBlocksDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p documentToBlocksDeleteMany) documentModel() {}
+
+func (r documentToBlocksDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentToBlocksDeleteMany) Tx() DocumentManyTxResult {
+	v := newDocumentManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type documentFindUnique struct {
+	query builder.Query
+}
+
+func (r documentFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentFindUnique) with()             {}
+func (r documentFindUnique) documentModel()    {}
+func (r documentFindUnique) documentRelation() {}
+
+func (r documentActions) FindUnique(
+	params DocumentEqualsUniqueWhereParam,
+) documentFindUnique {
+	var v documentFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "Document"
+	v.query.Outputs = documentOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r documentFindUnique) With(params ...DocumentRelationWith) documentFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentFindUnique) Select(params ...documentPrismaFields) documentFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentFindUnique) Omit(params ...documentPrismaFields) documentFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentFindUnique) Exec(ctx context.Context) (
+	*DocumentModel,
+	error,
+) {
+	var v *DocumentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentFindUnique) ExecInner(ctx context.Context) (
+	*InnerDocument,
+	error,
+) {
+	var v *InnerDocument
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentFindUnique) Update(params ...DocumentSetParam) documentUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Document"
+
+	var v documentUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type documentUpdateUnique struct {
+	query builder.Query
+}
+
+func (r documentUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentUpdateUnique) documentModel() {}
+
+func (r documentUpdateUnique) Exec(ctx context.Context) (*DocumentModel, error) {
+	var v DocumentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentUpdateUnique) Tx() DocumentUniqueTxResult {
+	v := newDocumentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r documentFindUnique) Delete() documentDeleteUnique {
+	var v documentDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Document"
+
+	return v
+}
+
+type documentDeleteUnique struct {
+	query builder.Query
+}
+
+func (r documentDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p documentDeleteUnique) documentModel() {}
+
+func (r documentDeleteUnique) Exec(ctx context.Context) (*DocumentModel, error) {
+	var v DocumentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentDeleteUnique) Tx() DocumentUniqueTxResult {
+	v := newDocumentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type documentFindFirst struct {
+	query builder.Query
+}
+
+func (r documentFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentFindFirst) with()             {}
+func (r documentFindFirst) documentModel()    {}
+func (r documentFindFirst) documentRelation() {}
+
+func (r documentActions) FindFirst(
+	params ...DocumentWhereParam,
+) documentFindFirst {
+	var v documentFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "Document"
+	v.query.Outputs = documentOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r documentFindFirst) With(params ...DocumentRelationWith) documentFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentFindFirst) Select(params ...documentPrismaFields) documentFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentFindFirst) Omit(params ...documentPrismaFields) documentFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentFindFirst) OrderBy(params ...DocumentOrderByParam) documentFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r documentFindFirst) Skip(count int) documentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentFindFirst) Take(count int) documentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentFindFirst) Cursor(cursor DocumentCursorParam) documentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r documentFindFirst) Exec(ctx context.Context) (
+	*DocumentModel,
+	error,
+) {
+	var v *DocumentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentFindFirst) ExecInner(ctx context.Context) (
+	*InnerDocument,
+	error,
+) {
+	var v *InnerDocument
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type documentFindMany struct {
+	query builder.Query
+}
+
+func (r documentFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentFindMany) with()             {}
+func (r documentFindMany) documentModel()    {}
+func (r documentFindMany) documentRelation() {}
+
+func (r documentActions) FindMany(
+	params ...DocumentWhereParam,
+) documentFindMany {
+	var v documentFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "Document"
+	v.query.Outputs = documentOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r documentFindMany) With(params ...DocumentRelationWith) documentFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentFindMany) Select(params ...documentPrismaFields) documentFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentFindMany) Omit(params ...documentPrismaFields) documentFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentFindMany) OrderBy(params ...DocumentOrderByParam) documentFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r documentFindMany) Skip(count int) documentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentFindMany) Take(count int) documentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentFindMany) Cursor(cursor DocumentCursorParam) documentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r documentFindMany) Exec(ctx context.Context) (
+	[]DocumentModel,
+	error,
+) {
+	var v []DocumentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r documentFindMany) ExecInner(ctx context.Context) (
+	[]InnerDocument,
+	error,
+) {
+	var v []InnerDocument
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r documentFindMany) Update(params ...DocumentSetParam) documentUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Document"
+
+	r.query.Outputs = countOutput
+
+	var v documentUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type documentUpdateMany struct {
+	query builder.Query
+}
+
+func (r documentUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentUpdateMany) documentModel() {}
+
+func (r documentUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentUpdateMany) Tx() DocumentManyTxResult {
+	v := newDocumentManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r documentFindMany) Delete() documentDeleteMany {
+	var v documentDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Document"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type documentDeleteMany struct {
+	query builder.Query
+}
+
+func (r documentDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p documentDeleteMany) documentModel() {}
+
+func (r documentDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentDeleteMany) Tx() DocumentManyTxResult {
+	v := newDocumentManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type documentBlockToDocumentFindUnique struct {
+	query builder.Query
+}
+
+func (r documentBlockToDocumentFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockToDocumentFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockToDocumentFindUnique) with()                  {}
+func (r documentBlockToDocumentFindUnique) documentBlockModel()    {}
+func (r documentBlockToDocumentFindUnique) documentBlockRelation() {}
+
+func (r documentBlockToDocumentFindUnique) With(params ...DocumentRelationWith) documentBlockToDocumentFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentBlockToDocumentFindUnique) Select(params ...documentBlockPrismaFields) documentBlockToDocumentFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockToDocumentFindUnique) Omit(params ...documentBlockPrismaFields) documentBlockToDocumentFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentBlockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockToDocumentFindUnique) Exec(ctx context.Context) (
+	*DocumentBlockModel,
+	error,
+) {
+	var v *DocumentBlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentBlockToDocumentFindUnique) ExecInner(ctx context.Context) (
+	*InnerDocumentBlock,
+	error,
+) {
+	var v *InnerDocumentBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentBlockToDocumentFindUnique) Update(params ...DocumentBlockSetParam) documentBlockToDocumentUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "DocumentBlock"
+
+	var v documentBlockToDocumentUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type documentBlockToDocumentUpdateUnique struct {
+	query builder.Query
+}
+
+func (r documentBlockToDocumentUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockToDocumentUpdateUnique) documentBlockModel() {}
+
+func (r documentBlockToDocumentUpdateUnique) Exec(ctx context.Context) (*DocumentBlockModel, error) {
+	var v DocumentBlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentBlockToDocumentUpdateUnique) Tx() DocumentBlockUniqueTxResult {
+	v := newDocumentBlockUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r documentBlockToDocumentFindUnique) Delete() documentBlockToDocumentDeleteUnique {
+	var v documentBlockToDocumentDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "DocumentBlock"
+
+	return v
+}
+
+type documentBlockToDocumentDeleteUnique struct {
+	query builder.Query
+}
+
+func (r documentBlockToDocumentDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p documentBlockToDocumentDeleteUnique) documentBlockModel() {}
+
+func (r documentBlockToDocumentDeleteUnique) Exec(ctx context.Context) (*DocumentBlockModel, error) {
+	var v DocumentBlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentBlockToDocumentDeleteUnique) Tx() DocumentBlockUniqueTxResult {
+	v := newDocumentBlockUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type documentBlockToDocumentFindFirst struct {
+	query builder.Query
+}
+
+func (r documentBlockToDocumentFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockToDocumentFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockToDocumentFindFirst) with()                  {}
+func (r documentBlockToDocumentFindFirst) documentBlockModel()    {}
+func (r documentBlockToDocumentFindFirst) documentBlockRelation() {}
+
+func (r documentBlockToDocumentFindFirst) With(params ...DocumentRelationWith) documentBlockToDocumentFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentBlockToDocumentFindFirst) Select(params ...documentBlockPrismaFields) documentBlockToDocumentFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockToDocumentFindFirst) Omit(params ...documentBlockPrismaFields) documentBlockToDocumentFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentBlockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockToDocumentFindFirst) OrderBy(params ...DocumentOrderByParam) documentBlockToDocumentFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r documentBlockToDocumentFindFirst) Skip(count int) documentBlockToDocumentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentBlockToDocumentFindFirst) Take(count int) documentBlockToDocumentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentBlockToDocumentFindFirst) Cursor(cursor DocumentBlockCursorParam) documentBlockToDocumentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r documentBlockToDocumentFindFirst) Exec(ctx context.Context) (
+	*DocumentBlockModel,
+	error,
+) {
+	var v *DocumentBlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentBlockToDocumentFindFirst) ExecInner(ctx context.Context) (
+	*InnerDocumentBlock,
+	error,
+) {
+	var v *InnerDocumentBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type documentBlockToDocumentFindMany struct {
+	query builder.Query
+}
+
+func (r documentBlockToDocumentFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockToDocumentFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockToDocumentFindMany) with()                  {}
+func (r documentBlockToDocumentFindMany) documentBlockModel()    {}
+func (r documentBlockToDocumentFindMany) documentBlockRelation() {}
+
+func (r documentBlockToDocumentFindMany) With(params ...DocumentRelationWith) documentBlockToDocumentFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentBlockToDocumentFindMany) Select(params ...documentBlockPrismaFields) documentBlockToDocumentFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockToDocumentFindMany) Omit(params ...documentBlockPrismaFields) documentBlockToDocumentFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentBlockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockToDocumentFindMany) OrderBy(params ...DocumentOrderByParam) documentBlockToDocumentFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r documentBlockToDocumentFindMany) Skip(count int) documentBlockToDocumentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentBlockToDocumentFindMany) Take(count int) documentBlockToDocumentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentBlockToDocumentFindMany) Cursor(cursor DocumentBlockCursorParam) documentBlockToDocumentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r documentBlockToDocumentFindMany) Exec(ctx context.Context) (
+	[]DocumentBlockModel,
+	error,
+) {
+	var v []DocumentBlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r documentBlockToDocumentFindMany) ExecInner(ctx context.Context) (
+	[]InnerDocumentBlock,
+	error,
+) {
+	var v []InnerDocumentBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r documentBlockToDocumentFindMany) Update(params ...DocumentBlockSetParam) documentBlockToDocumentUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "DocumentBlock"
+
+	r.query.Outputs = countOutput
+
+	var v documentBlockToDocumentUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type documentBlockToDocumentUpdateMany struct {
+	query builder.Query
+}
+
+func (r documentBlockToDocumentUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockToDocumentUpdateMany) documentBlockModel() {}
+
+func (r documentBlockToDocumentUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentBlockToDocumentUpdateMany) Tx() DocumentBlockManyTxResult {
+	v := newDocumentBlockManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r documentBlockToDocumentFindMany) Delete() documentBlockToDocumentDeleteMany {
+	var v documentBlockToDocumentDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "DocumentBlock"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type documentBlockToDocumentDeleteMany struct {
+	query builder.Query
+}
+
+func (r documentBlockToDocumentDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p documentBlockToDocumentDeleteMany) documentBlockModel() {}
+
+func (r documentBlockToDocumentDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentBlockToDocumentDeleteMany) Tx() DocumentBlockManyTxResult {
+	v := newDocumentBlockManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type documentBlockToBlockFindUnique struct {
+	query builder.Query
+}
+
+func (r documentBlockToBlockFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockToBlockFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockToBlockFindUnique) with()                  {}
+func (r documentBlockToBlockFindUnique) documentBlockModel()    {}
+func (r documentBlockToBlockFindUnique) documentBlockRelation() {}
+
+func (r documentBlockToBlockFindUnique) With(params ...BlockRelationWith) documentBlockToBlockFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentBlockToBlockFindUnique) Select(params ...documentBlockPrismaFields) documentBlockToBlockFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockToBlockFindUnique) Omit(params ...documentBlockPrismaFields) documentBlockToBlockFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentBlockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockToBlockFindUnique) Exec(ctx context.Context) (
+	*DocumentBlockModel,
+	error,
+) {
+	var v *DocumentBlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentBlockToBlockFindUnique) ExecInner(ctx context.Context) (
+	*InnerDocumentBlock,
+	error,
+) {
+	var v *InnerDocumentBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentBlockToBlockFindUnique) Update(params ...DocumentBlockSetParam) documentBlockToBlockUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "DocumentBlock"
+
+	var v documentBlockToBlockUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type documentBlockToBlockUpdateUnique struct {
+	query builder.Query
+}
+
+func (r documentBlockToBlockUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockToBlockUpdateUnique) documentBlockModel() {}
+
+func (r documentBlockToBlockUpdateUnique) Exec(ctx context.Context) (*DocumentBlockModel, error) {
+	var v DocumentBlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentBlockToBlockUpdateUnique) Tx() DocumentBlockUniqueTxResult {
+	v := newDocumentBlockUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r documentBlockToBlockFindUnique) Delete() documentBlockToBlockDeleteUnique {
+	var v documentBlockToBlockDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "DocumentBlock"
+
+	return v
+}
+
+type documentBlockToBlockDeleteUnique struct {
+	query builder.Query
+}
+
+func (r documentBlockToBlockDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p documentBlockToBlockDeleteUnique) documentBlockModel() {}
+
+func (r documentBlockToBlockDeleteUnique) Exec(ctx context.Context) (*DocumentBlockModel, error) {
+	var v DocumentBlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentBlockToBlockDeleteUnique) Tx() DocumentBlockUniqueTxResult {
+	v := newDocumentBlockUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type documentBlockToBlockFindFirst struct {
+	query builder.Query
+}
+
+func (r documentBlockToBlockFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockToBlockFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockToBlockFindFirst) with()                  {}
+func (r documentBlockToBlockFindFirst) documentBlockModel()    {}
+func (r documentBlockToBlockFindFirst) documentBlockRelation() {}
+
+func (r documentBlockToBlockFindFirst) With(params ...BlockRelationWith) documentBlockToBlockFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentBlockToBlockFindFirst) Select(params ...documentBlockPrismaFields) documentBlockToBlockFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockToBlockFindFirst) Omit(params ...documentBlockPrismaFields) documentBlockToBlockFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentBlockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockToBlockFindFirst) OrderBy(params ...BlockOrderByParam) documentBlockToBlockFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r documentBlockToBlockFindFirst) Skip(count int) documentBlockToBlockFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentBlockToBlockFindFirst) Take(count int) documentBlockToBlockFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentBlockToBlockFindFirst) Cursor(cursor DocumentBlockCursorParam) documentBlockToBlockFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r documentBlockToBlockFindFirst) Exec(ctx context.Context) (
+	*DocumentBlockModel,
+	error,
+) {
+	var v *DocumentBlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentBlockToBlockFindFirst) ExecInner(ctx context.Context) (
+	*InnerDocumentBlock,
+	error,
+) {
+	var v *InnerDocumentBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type documentBlockToBlockFindMany struct {
+	query builder.Query
+}
+
+func (r documentBlockToBlockFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockToBlockFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockToBlockFindMany) with()                  {}
+func (r documentBlockToBlockFindMany) documentBlockModel()    {}
+func (r documentBlockToBlockFindMany) documentBlockRelation() {}
+
+func (r documentBlockToBlockFindMany) With(params ...BlockRelationWith) documentBlockToBlockFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentBlockToBlockFindMany) Select(params ...documentBlockPrismaFields) documentBlockToBlockFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockToBlockFindMany) Omit(params ...documentBlockPrismaFields) documentBlockToBlockFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentBlockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockToBlockFindMany) OrderBy(params ...BlockOrderByParam) documentBlockToBlockFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r documentBlockToBlockFindMany) Skip(count int) documentBlockToBlockFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentBlockToBlockFindMany) Take(count int) documentBlockToBlockFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentBlockToBlockFindMany) Cursor(cursor DocumentBlockCursorParam) documentBlockToBlockFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r documentBlockToBlockFindMany) Exec(ctx context.Context) (
+	[]DocumentBlockModel,
+	error,
+) {
+	var v []DocumentBlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r documentBlockToBlockFindMany) ExecInner(ctx context.Context) (
+	[]InnerDocumentBlock,
+	error,
+) {
+	var v []InnerDocumentBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r documentBlockToBlockFindMany) Update(params ...DocumentBlockSetParam) documentBlockToBlockUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "DocumentBlock"
+
+	r.query.Outputs = countOutput
+
+	var v documentBlockToBlockUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type documentBlockToBlockUpdateMany struct {
+	query builder.Query
+}
+
+func (r documentBlockToBlockUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockToBlockUpdateMany) documentBlockModel() {}
+
+func (r documentBlockToBlockUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentBlockToBlockUpdateMany) Tx() DocumentBlockManyTxResult {
+	v := newDocumentBlockManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r documentBlockToBlockFindMany) Delete() documentBlockToBlockDeleteMany {
+	var v documentBlockToBlockDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "DocumentBlock"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type documentBlockToBlockDeleteMany struct {
+	query builder.Query
+}
+
+func (r documentBlockToBlockDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p documentBlockToBlockDeleteMany) documentBlockModel() {}
+
+func (r documentBlockToBlockDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentBlockToBlockDeleteMany) Tx() DocumentBlockManyTxResult {
+	v := newDocumentBlockManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type documentBlockFindUnique struct {
+	query builder.Query
+}
+
+func (r documentBlockFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockFindUnique) with()                  {}
+func (r documentBlockFindUnique) documentBlockModel()    {}
+func (r documentBlockFindUnique) documentBlockRelation() {}
+
+func (r documentBlockActions) FindUnique(
+	params DocumentBlockEqualsUniqueWhereParam,
+) documentBlockFindUnique {
+	var v documentBlockFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "DocumentBlock"
+	v.query.Outputs = documentBlockOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r documentBlockFindUnique) With(params ...DocumentBlockRelationWith) documentBlockFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentBlockFindUnique) Select(params ...documentBlockPrismaFields) documentBlockFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockFindUnique) Omit(params ...documentBlockPrismaFields) documentBlockFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentBlockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockFindUnique) Exec(ctx context.Context) (
+	*DocumentBlockModel,
+	error,
+) {
+	var v *DocumentBlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentBlockFindUnique) ExecInner(ctx context.Context) (
+	*InnerDocumentBlock,
+	error,
+) {
+	var v *InnerDocumentBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentBlockFindUnique) Update(params ...DocumentBlockSetParam) documentBlockUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "DocumentBlock"
+
+	var v documentBlockUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type documentBlockUpdateUnique struct {
+	query builder.Query
+}
+
+func (r documentBlockUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockUpdateUnique) documentBlockModel() {}
+
+func (r documentBlockUpdateUnique) Exec(ctx context.Context) (*DocumentBlockModel, error) {
+	var v DocumentBlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentBlockUpdateUnique) Tx() DocumentBlockUniqueTxResult {
+	v := newDocumentBlockUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r documentBlockFindUnique) Delete() documentBlockDeleteUnique {
+	var v documentBlockDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "DocumentBlock"
+
+	return v
+}
+
+type documentBlockDeleteUnique struct {
+	query builder.Query
+}
+
+func (r documentBlockDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p documentBlockDeleteUnique) documentBlockModel() {}
+
+func (r documentBlockDeleteUnique) Exec(ctx context.Context) (*DocumentBlockModel, error) {
+	var v DocumentBlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentBlockDeleteUnique) Tx() DocumentBlockUniqueTxResult {
+	v := newDocumentBlockUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type documentBlockFindFirst struct {
+	query builder.Query
+}
+
+func (r documentBlockFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockFindFirst) with()                  {}
+func (r documentBlockFindFirst) documentBlockModel()    {}
+func (r documentBlockFindFirst) documentBlockRelation() {}
+
+func (r documentBlockActions) FindFirst(
+	params ...DocumentBlockWhereParam,
+) documentBlockFindFirst {
+	var v documentBlockFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "DocumentBlock"
+	v.query.Outputs = documentBlockOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r documentBlockFindFirst) With(params ...DocumentBlockRelationWith) documentBlockFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentBlockFindFirst) Select(params ...documentBlockPrismaFields) documentBlockFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockFindFirst) Omit(params ...documentBlockPrismaFields) documentBlockFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentBlockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockFindFirst) OrderBy(params ...DocumentBlockOrderByParam) documentBlockFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r documentBlockFindFirst) Skip(count int) documentBlockFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentBlockFindFirst) Take(count int) documentBlockFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentBlockFindFirst) Cursor(cursor DocumentBlockCursorParam) documentBlockFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r documentBlockFindFirst) Exec(ctx context.Context) (
+	*DocumentBlockModel,
+	error,
+) {
+	var v *DocumentBlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r documentBlockFindFirst) ExecInner(ctx context.Context) (
+	*InnerDocumentBlock,
+	error,
+) {
+	var v *InnerDocumentBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type documentBlockFindMany struct {
+	query builder.Query
+}
+
+func (r documentBlockFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockFindMany) with()                  {}
+func (r documentBlockFindMany) documentBlockModel()    {}
+func (r documentBlockFindMany) documentBlockRelation() {}
+
+func (r documentBlockActions) FindMany(
+	params ...DocumentBlockWhereParam,
+) documentBlockFindMany {
+	var v documentBlockFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "DocumentBlock"
+	v.query.Outputs = documentBlockOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r documentBlockFindMany) With(params ...DocumentBlockRelationWith) documentBlockFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r documentBlockFindMany) Select(params ...documentBlockPrismaFields) documentBlockFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockFindMany) Omit(params ...documentBlockPrismaFields) documentBlockFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range documentBlockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r documentBlockFindMany) OrderBy(params ...DocumentBlockOrderByParam) documentBlockFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r documentBlockFindMany) Skip(count int) documentBlockFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentBlockFindMany) Take(count int) documentBlockFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r documentBlockFindMany) Cursor(cursor DocumentBlockCursorParam) documentBlockFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r documentBlockFindMany) Exec(ctx context.Context) (
+	[]DocumentBlockModel,
+	error,
+) {
+	var v []DocumentBlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r documentBlockFindMany) ExecInner(ctx context.Context) (
+	[]InnerDocumentBlock,
+	error,
+) {
+	var v []InnerDocumentBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r documentBlockFindMany) Update(params ...DocumentBlockSetParam) documentBlockUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "DocumentBlock"
+
+	r.query.Outputs = countOutput
+
+	var v documentBlockUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type documentBlockUpdateMany struct {
+	query builder.Query
+}
+
+func (r documentBlockUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockUpdateMany) documentBlockModel() {}
+
+func (r documentBlockUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentBlockUpdateMany) Tx() DocumentBlockManyTxResult {
+	v := newDocumentBlockManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r documentBlockFindMany) Delete() documentBlockDeleteMany {
+	var v documentBlockDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "DocumentBlock"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type documentBlockDeleteMany struct {
+	query builder.Query
+}
+
+func (r documentBlockDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p documentBlockDeleteMany) documentBlockModel() {}
+
+func (r documentBlockDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentBlockDeleteMany) Tx() DocumentBlockManyTxResult {
+	v := newDocumentBlockManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type blockToOrganizationFindUnique struct {
+	query builder.Query
+}
+
+func (r blockToOrganizationFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r blockToOrganizationFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r blockToOrganizationFindUnique) with()          {}
+func (r blockToOrganizationFindUnique) blockModel()    {}
+func (r blockToOrganizationFindUnique) blockRelation() {}
+
+func (r blockToOrganizationFindUnique) With(params ...OrganizationRelationWith) blockToOrganizationFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r blockToOrganizationFindUnique) Select(params ...blockPrismaFields) blockToOrganizationFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockToOrganizationFindUnique) Omit(params ...blockPrismaFields) blockToOrganizationFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range blockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockToOrganizationFindUnique) Exec(ctx context.Context) (
+	*BlockModel,
+	error,
+) {
+	var v *BlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r blockToOrganizationFindUnique) ExecInner(ctx context.Context) (
+	*InnerBlock,
+	error,
+) {
+	var v *InnerBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r blockToOrganizationFindUnique) Update(params ...BlockSetParam) blockToOrganizationUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Block"
+
+	var v blockToOrganizationUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type blockToOrganizationUpdateUnique struct {
+	query builder.Query
+}
+
+func (r blockToOrganizationUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r blockToOrganizationUpdateUnique) blockModel() {}
+
+func (r blockToOrganizationUpdateUnique) Exec(ctx context.Context) (*BlockModel, error) {
+	var v BlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r blockToOrganizationUpdateUnique) Tx() BlockUniqueTxResult {
+	v := newBlockUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r blockToOrganizationFindUnique) Delete() blockToOrganizationDeleteUnique {
+	var v blockToOrganizationDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Block"
+
+	return v
+}
+
+type blockToOrganizationDeleteUnique struct {
+	query builder.Query
+}
+
+func (r blockToOrganizationDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p blockToOrganizationDeleteUnique) blockModel() {}
+
+func (r blockToOrganizationDeleteUnique) Exec(ctx context.Context) (*BlockModel, error) {
+	var v BlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r blockToOrganizationDeleteUnique) Tx() BlockUniqueTxResult {
+	v := newBlockUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type blockToOrganizationFindFirst struct {
+	query builder.Query
+}
+
+func (r blockToOrganizationFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r blockToOrganizationFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r blockToOrganizationFindFirst) with()          {}
+func (r blockToOrganizationFindFirst) blockModel()    {}
+func (r blockToOrganizationFindFirst) blockRelation() {}
+
+func (r blockToOrganizationFindFirst) With(params ...OrganizationRelationWith) blockToOrganizationFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r blockToOrganizationFindFirst) Select(params ...blockPrismaFields) blockToOrganizationFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockToOrganizationFindFirst) Omit(params ...blockPrismaFields) blockToOrganizationFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range blockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockToOrganizationFindFirst) OrderBy(params ...OrganizationOrderByParam) blockToOrganizationFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r blockToOrganizationFindFirst) Skip(count int) blockToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r blockToOrganizationFindFirst) Take(count int) blockToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r blockToOrganizationFindFirst) Cursor(cursor BlockCursorParam) blockToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r blockToOrganizationFindFirst) Exec(ctx context.Context) (
+	*BlockModel,
+	error,
+) {
+	var v *BlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r blockToOrganizationFindFirst) ExecInner(ctx context.Context) (
+	*InnerBlock,
+	error,
+) {
+	var v *InnerBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type blockToOrganizationFindMany struct {
+	query builder.Query
+}
+
+func (r blockToOrganizationFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r blockToOrganizationFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r blockToOrganizationFindMany) with()          {}
+func (r blockToOrganizationFindMany) blockModel()    {}
+func (r blockToOrganizationFindMany) blockRelation() {}
+
+func (r blockToOrganizationFindMany) With(params ...OrganizationRelationWith) blockToOrganizationFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r blockToOrganizationFindMany) Select(params ...blockPrismaFields) blockToOrganizationFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockToOrganizationFindMany) Omit(params ...blockPrismaFields) blockToOrganizationFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range blockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockToOrganizationFindMany) OrderBy(params ...OrganizationOrderByParam) blockToOrganizationFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r blockToOrganizationFindMany) Skip(count int) blockToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r blockToOrganizationFindMany) Take(count int) blockToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r blockToOrganizationFindMany) Cursor(cursor BlockCursorParam) blockToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r blockToOrganizationFindMany) Exec(ctx context.Context) (
+	[]BlockModel,
+	error,
+) {
+	var v []BlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r blockToOrganizationFindMany) ExecInner(ctx context.Context) (
+	[]InnerBlock,
+	error,
+) {
+	var v []InnerBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r blockToOrganizationFindMany) Update(params ...BlockSetParam) blockToOrganizationUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Block"
+
+	r.query.Outputs = countOutput
+
+	var v blockToOrganizationUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type blockToOrganizationUpdateMany struct {
+	query builder.Query
+}
+
+func (r blockToOrganizationUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r blockToOrganizationUpdateMany) blockModel() {}
+
+func (r blockToOrganizationUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r blockToOrganizationUpdateMany) Tx() BlockManyTxResult {
+	v := newBlockManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r blockToOrganizationFindMany) Delete() blockToOrganizationDeleteMany {
+	var v blockToOrganizationDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Block"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type blockToOrganizationDeleteMany struct {
+	query builder.Query
+}
+
+func (r blockToOrganizationDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p blockToOrganizationDeleteMany) blockModel() {}
+
+func (r blockToOrganizationDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r blockToOrganizationDeleteMany) Tx() BlockManyTxResult {
+	v := newBlockManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type blockToDocumentsFindUnique struct {
+	query builder.Query
+}
+
+func (r blockToDocumentsFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r blockToDocumentsFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r blockToDocumentsFindUnique) with()          {}
+func (r blockToDocumentsFindUnique) blockModel()    {}
+func (r blockToDocumentsFindUnique) blockRelation() {}
+
+func (r blockToDocumentsFindUnique) With(params ...DocumentBlockRelationWith) blockToDocumentsFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r blockToDocumentsFindUnique) Select(params ...blockPrismaFields) blockToDocumentsFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockToDocumentsFindUnique) Omit(params ...blockPrismaFields) blockToDocumentsFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range blockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockToDocumentsFindUnique) Exec(ctx context.Context) (
+	*BlockModel,
+	error,
+) {
+	var v *BlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r blockToDocumentsFindUnique) ExecInner(ctx context.Context) (
+	*InnerBlock,
+	error,
+) {
+	var v *InnerBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r blockToDocumentsFindUnique) Update(params ...BlockSetParam) blockToDocumentsUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Block"
+
+	var v blockToDocumentsUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type blockToDocumentsUpdateUnique struct {
+	query builder.Query
+}
+
+func (r blockToDocumentsUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r blockToDocumentsUpdateUnique) blockModel() {}
+
+func (r blockToDocumentsUpdateUnique) Exec(ctx context.Context) (*BlockModel, error) {
+	var v BlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r blockToDocumentsUpdateUnique) Tx() BlockUniqueTxResult {
+	v := newBlockUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r blockToDocumentsFindUnique) Delete() blockToDocumentsDeleteUnique {
+	var v blockToDocumentsDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Block"
+
+	return v
+}
+
+type blockToDocumentsDeleteUnique struct {
+	query builder.Query
+}
+
+func (r blockToDocumentsDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p blockToDocumentsDeleteUnique) blockModel() {}
+
+func (r blockToDocumentsDeleteUnique) Exec(ctx context.Context) (*BlockModel, error) {
+	var v BlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r blockToDocumentsDeleteUnique) Tx() BlockUniqueTxResult {
+	v := newBlockUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type blockToDocumentsFindFirst struct {
+	query builder.Query
+}
+
+func (r blockToDocumentsFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r blockToDocumentsFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r blockToDocumentsFindFirst) with()          {}
+func (r blockToDocumentsFindFirst) blockModel()    {}
+func (r blockToDocumentsFindFirst) blockRelation() {}
+
+func (r blockToDocumentsFindFirst) With(params ...DocumentBlockRelationWith) blockToDocumentsFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r blockToDocumentsFindFirst) Select(params ...blockPrismaFields) blockToDocumentsFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockToDocumentsFindFirst) Omit(params ...blockPrismaFields) blockToDocumentsFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range blockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockToDocumentsFindFirst) OrderBy(params ...DocumentBlockOrderByParam) blockToDocumentsFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r blockToDocumentsFindFirst) Skip(count int) blockToDocumentsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r blockToDocumentsFindFirst) Take(count int) blockToDocumentsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r blockToDocumentsFindFirst) Cursor(cursor BlockCursorParam) blockToDocumentsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r blockToDocumentsFindFirst) Exec(ctx context.Context) (
+	*BlockModel,
+	error,
+) {
+	var v *BlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r blockToDocumentsFindFirst) ExecInner(ctx context.Context) (
+	*InnerBlock,
+	error,
+) {
+	var v *InnerBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type blockToDocumentsFindMany struct {
+	query builder.Query
+}
+
+func (r blockToDocumentsFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r blockToDocumentsFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r blockToDocumentsFindMany) with()          {}
+func (r blockToDocumentsFindMany) blockModel()    {}
+func (r blockToDocumentsFindMany) blockRelation() {}
+
+func (r blockToDocumentsFindMany) With(params ...DocumentBlockRelationWith) blockToDocumentsFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r blockToDocumentsFindMany) Select(params ...blockPrismaFields) blockToDocumentsFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockToDocumentsFindMany) Omit(params ...blockPrismaFields) blockToDocumentsFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range blockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockToDocumentsFindMany) OrderBy(params ...DocumentBlockOrderByParam) blockToDocumentsFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r blockToDocumentsFindMany) Skip(count int) blockToDocumentsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r blockToDocumentsFindMany) Take(count int) blockToDocumentsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r blockToDocumentsFindMany) Cursor(cursor BlockCursorParam) blockToDocumentsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r blockToDocumentsFindMany) Exec(ctx context.Context) (
+	[]BlockModel,
+	error,
+) {
+	var v []BlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r blockToDocumentsFindMany) ExecInner(ctx context.Context) (
+	[]InnerBlock,
+	error,
+) {
+	var v []InnerBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r blockToDocumentsFindMany) Update(params ...BlockSetParam) blockToDocumentsUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Block"
+
+	r.query.Outputs = countOutput
+
+	var v blockToDocumentsUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type blockToDocumentsUpdateMany struct {
+	query builder.Query
+}
+
+func (r blockToDocumentsUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r blockToDocumentsUpdateMany) blockModel() {}
+
+func (r blockToDocumentsUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r blockToDocumentsUpdateMany) Tx() BlockManyTxResult {
+	v := newBlockManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r blockToDocumentsFindMany) Delete() blockToDocumentsDeleteMany {
+	var v blockToDocumentsDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Block"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type blockToDocumentsDeleteMany struct {
+	query builder.Query
+}
+
+func (r blockToDocumentsDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p blockToDocumentsDeleteMany) blockModel() {}
+
+func (r blockToDocumentsDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r blockToDocumentsDeleteMany) Tx() BlockManyTxResult {
+	v := newBlockManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type blockFindUnique struct {
+	query builder.Query
+}
+
+func (r blockFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r blockFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r blockFindUnique) with()          {}
+func (r blockFindUnique) blockModel()    {}
+func (r blockFindUnique) blockRelation() {}
+
+func (r blockActions) FindUnique(
+	params BlockEqualsUniqueWhereParam,
+) blockFindUnique {
+	var v blockFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "Block"
+	v.query.Outputs = blockOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r blockFindUnique) With(params ...BlockRelationWith) blockFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r blockFindUnique) Select(params ...blockPrismaFields) blockFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockFindUnique) Omit(params ...blockPrismaFields) blockFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range blockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockFindUnique) Exec(ctx context.Context) (
+	*BlockModel,
+	error,
+) {
+	var v *BlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r blockFindUnique) ExecInner(ctx context.Context) (
+	*InnerBlock,
+	error,
+) {
+	var v *InnerBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r blockFindUnique) Update(params ...BlockSetParam) blockUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Block"
+
+	var v blockUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type blockUpdateUnique struct {
+	query builder.Query
+}
+
+func (r blockUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r blockUpdateUnique) blockModel() {}
+
+func (r blockUpdateUnique) Exec(ctx context.Context) (*BlockModel, error) {
+	var v BlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r blockUpdateUnique) Tx() BlockUniqueTxResult {
+	v := newBlockUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r blockFindUnique) Delete() blockDeleteUnique {
+	var v blockDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Block"
+
+	return v
+}
+
+type blockDeleteUnique struct {
+	query builder.Query
+}
+
+func (r blockDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p blockDeleteUnique) blockModel() {}
+
+func (r blockDeleteUnique) Exec(ctx context.Context) (*BlockModel, error) {
+	var v BlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r blockDeleteUnique) Tx() BlockUniqueTxResult {
+	v := newBlockUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type blockFindFirst struct {
+	query builder.Query
+}
+
+func (r blockFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r blockFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r blockFindFirst) with()          {}
+func (r blockFindFirst) blockModel()    {}
+func (r blockFindFirst) blockRelation() {}
+
+func (r blockActions) FindFirst(
+	params ...BlockWhereParam,
+) blockFindFirst {
+	var v blockFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "Block"
+	v.query.Outputs = blockOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r blockFindFirst) With(params ...BlockRelationWith) blockFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r blockFindFirst) Select(params ...blockPrismaFields) blockFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockFindFirst) Omit(params ...blockPrismaFields) blockFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range blockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockFindFirst) OrderBy(params ...BlockOrderByParam) blockFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r blockFindFirst) Skip(count int) blockFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r blockFindFirst) Take(count int) blockFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r blockFindFirst) Cursor(cursor BlockCursorParam) blockFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r blockFindFirst) Exec(ctx context.Context) (
+	*BlockModel,
+	error,
+) {
+	var v *BlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r blockFindFirst) ExecInner(ctx context.Context) (
+	*InnerBlock,
+	error,
+) {
+	var v *InnerBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type blockFindMany struct {
+	query builder.Query
+}
+
+func (r blockFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r blockFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r blockFindMany) with()          {}
+func (r blockFindMany) blockModel()    {}
+func (r blockFindMany) blockRelation() {}
+
+func (r blockActions) FindMany(
+	params ...BlockWhereParam,
+) blockFindMany {
+	var v blockFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "Block"
+	v.query.Outputs = blockOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r blockFindMany) With(params ...BlockRelationWith) blockFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r blockFindMany) Select(params ...blockPrismaFields) blockFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockFindMany) Omit(params ...blockPrismaFields) blockFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range blockOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r blockFindMany) OrderBy(params ...BlockOrderByParam) blockFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r blockFindMany) Skip(count int) blockFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r blockFindMany) Take(count int) blockFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r blockFindMany) Cursor(cursor BlockCursorParam) blockFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r blockFindMany) Exec(ctx context.Context) (
+	[]BlockModel,
+	error,
+) {
+	var v []BlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r blockFindMany) ExecInner(ctx context.Context) (
+	[]InnerBlock,
+	error,
+) {
+	var v []InnerBlock
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r blockFindMany) Update(params ...BlockSetParam) blockUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Block"
+
+	r.query.Outputs = countOutput
+
+	var v blockUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type blockUpdateMany struct {
+	query builder.Query
+}
+
+func (r blockUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r blockUpdateMany) blockModel() {}
+
+func (r blockUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r blockUpdateMany) Tx() BlockManyTxResult {
+	v := newBlockManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r blockFindMany) Delete() blockDeleteMany {
+	var v blockDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Block"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type blockDeleteMany struct {
+	query builder.Query
+}
+
+func (r blockDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p blockDeleteMany) blockModel() {}
+
+func (r blockDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r blockDeleteMany) Tx() BlockManyTxResult {
+	v := newBlockManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 // --- template transaction.gotpl ---
 
 func newOrganizationUniqueTxResult() OrganizationUniqueTxResult {
@@ -35581,6 +71061,294 @@ func (r UserRoleManyTxResult) Result() (v *BatchResult) {
 	return v
 }
 
+func newComponentUniqueTxResult() ComponentUniqueTxResult {
+	return ComponentUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type ComponentUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p ComponentUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p ComponentUniqueTxResult) IsTx() {}
+
+func (r ComponentUniqueTxResult) Result() (v *ComponentModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newComponentManyTxResult() ComponentManyTxResult {
+	return ComponentManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type ComponentManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p ComponentManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p ComponentManyTxResult) IsTx() {}
+
+func (r ComponentManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newComponentTagUniqueTxResult() ComponentTagUniqueTxResult {
+	return ComponentTagUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type ComponentTagUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p ComponentTagUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p ComponentTagUniqueTxResult) IsTx() {}
+
+func (r ComponentTagUniqueTxResult) Result() (v *ComponentTagModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newComponentTagManyTxResult() ComponentTagManyTxResult {
+	return ComponentTagManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type ComponentTagManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p ComponentTagManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p ComponentTagManyTxResult) IsTx() {}
+
+func (r ComponentTagManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newTagUniqueTxResult() TagUniqueTxResult {
+	return TagUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type TagUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p TagUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p TagUniqueTxResult) IsTx() {}
+
+func (r TagUniqueTxResult) Result() (v *TagModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newTagManyTxResult() TagManyTxResult {
+	return TagManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type TagManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p TagManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p TagManyTxResult) IsTx() {}
+
+func (r TagManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newDocumentUniqueTxResult() DocumentUniqueTxResult {
+	return DocumentUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type DocumentUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p DocumentUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p DocumentUniqueTxResult) IsTx() {}
+
+func (r DocumentUniqueTxResult) Result() (v *DocumentModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newDocumentManyTxResult() DocumentManyTxResult {
+	return DocumentManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type DocumentManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p DocumentManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p DocumentManyTxResult) IsTx() {}
+
+func (r DocumentManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newDocumentBlockUniqueTxResult() DocumentBlockUniqueTxResult {
+	return DocumentBlockUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type DocumentBlockUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p DocumentBlockUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p DocumentBlockUniqueTxResult) IsTx() {}
+
+func (r DocumentBlockUniqueTxResult) Result() (v *DocumentBlockModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newDocumentBlockManyTxResult() DocumentBlockManyTxResult {
+	return DocumentBlockManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type DocumentBlockManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p DocumentBlockManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p DocumentBlockManyTxResult) IsTx() {}
+
+func (r DocumentBlockManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newBlockUniqueTxResult() BlockUniqueTxResult {
+	return BlockUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type BlockUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p BlockUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p BlockUniqueTxResult) IsTx() {}
+
+func (r BlockUniqueTxResult) Result() (v *BlockModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newBlockManyTxResult() BlockManyTxResult {
+	return BlockManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type BlockManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p BlockManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p BlockManyTxResult) IsTx() {}
+
+func (r BlockManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
 // --- template upsert.gotpl ---
 
 type organizationUpsertOne struct {
@@ -35731,10 +71499,10 @@ func (r userActions) UpsertOne(
 
 func (r userUpsertOne) Create(
 
+	_organization UserWithPrismaOrganizationSetParam,
 	_email UserWithPrismaEmailSetParam,
 	_password UserWithPrismaPasswordSetParam,
 	_status UserWithPrismaStatusSetParam,
-	_organization UserWithPrismaOrganizationSetParam,
 
 	optional ...UserSetParam,
 ) userUpsertOne {
@@ -35742,10 +71510,10 @@ func (r userUpsertOne) Create(
 	v.query = r.query
 
 	var fields []builder.Field
+	fields = append(fields, _organization.field())
 	fields = append(fields, _email.field())
 	fields = append(fields, _password.field())
 	fields = append(fields, _status.field())
-	fields = append(fields, _organization.field())
 
 	for _, q := range optional {
 		fields = append(fields, q.field())
@@ -35847,6 +71615,7 @@ func (r sessionActions) UpsertOne(
 
 func (r sessionUpsertOne) Create(
 
+	_organization SessionWithPrismaOrganizationSetParam,
 	_status SessionWithPrismaStatusSetParam,
 	_user SessionWithPrismaUserSetParam,
 
@@ -35856,6 +71625,7 @@ func (r sessionUpsertOne) Create(
 	v.query = r.query
 
 	var fields []builder.Field
+	fields = append(fields, _organization.field())
 	fields = append(fields, _status.field())
 	fields = append(fields, _user.field())
 
@@ -36478,6 +72248,688 @@ func (r userRoleUpsertOne) Exec(ctx context.Context) (*UserRoleModel, error) {
 
 func (r userRoleUpsertOne) Tx() UserRoleUniqueTxResult {
 	v := newUserRoleUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type componentUpsertOne struct {
+	query builder.Query
+}
+
+func (r componentUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentUpsertOne) with()              {}
+func (r componentUpsertOne) componentModel()    {}
+func (r componentUpsertOne) componentRelation() {}
+
+func (r componentActions) UpsertOne(
+	params ComponentEqualsUniqueWhereParam,
+) componentUpsertOne {
+	var v componentUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "Component"
+	v.query.Outputs = componentOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r componentUpsertOne) Create(
+
+	_organization ComponentWithPrismaOrganizationSetParam,
+	_name ComponentWithPrismaNameSetParam,
+	_type ComponentWithPrismaTypeSetParam,
+	_provider ComponentWithPrismaProviderSetParam,
+
+	optional ...ComponentSetParam,
+) componentUpsertOne {
+	var v componentUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _organization.field())
+	fields = append(fields, _name.field())
+	fields = append(fields, _type.field())
+	fields = append(fields, _provider.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r componentUpsertOne) Update(
+	params ...ComponentSetParam,
+) componentUpsertOne {
+	var v componentUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r componentUpsertOne) Exec(ctx context.Context) (*ComponentModel, error) {
+	var v ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentUpsertOne) Tx() ComponentUniqueTxResult {
+	v := newComponentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type componentTagUpsertOne struct {
+	query builder.Query
+}
+
+func (r componentTagUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentTagUpsertOne) with()                 {}
+func (r componentTagUpsertOne) componentTagModel()    {}
+func (r componentTagUpsertOne) componentTagRelation() {}
+
+func (r componentTagActions) UpsertOne(
+	params ComponentTagEqualsUniqueWhereParam,
+) componentTagUpsertOne {
+	var v componentTagUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "ComponentTag"
+	v.query.Outputs = componentTagOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r componentTagUpsertOne) Create(
+
+	_component ComponentTagWithPrismaComponentSetParam,
+	_tag ComponentTagWithPrismaTagSetParam,
+
+	optional ...ComponentTagSetParam,
+) componentTagUpsertOne {
+	var v componentTagUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _component.field())
+	fields = append(fields, _tag.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r componentTagUpsertOne) Update(
+	params ...ComponentTagSetParam,
+) componentTagUpsertOne {
+	var v componentTagUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r componentTagUpsertOne) Exec(ctx context.Context) (*ComponentTagModel, error) {
+	var v ComponentTagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentTagUpsertOne) Tx() ComponentTagUniqueTxResult {
+	v := newComponentTagUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tagUpsertOne struct {
+	query builder.Query
+}
+
+func (r tagUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tagUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tagUpsertOne) with()        {}
+func (r tagUpsertOne) tagModel()    {}
+func (r tagUpsertOne) tagRelation() {}
+
+func (r tagActions) UpsertOne(
+	params TagEqualsUniqueWhereParam,
+) tagUpsertOne {
+	var v tagUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "Tag"
+	v.query.Outputs = tagOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r tagUpsertOne) Create(
+
+	_organization TagWithPrismaOrganizationSetParam,
+	_name TagWithPrismaNameSetParam,
+
+	optional ...TagSetParam,
+) tagUpsertOne {
+	var v tagUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _organization.field())
+	fields = append(fields, _name.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r tagUpsertOne) Update(
+	params ...TagSetParam,
+) tagUpsertOne {
+	var v tagUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r tagUpsertOne) Exec(ctx context.Context) (*TagModel, error) {
+	var v TagModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tagUpsertOne) Tx() TagUniqueTxResult {
+	v := newTagUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type documentUpsertOne struct {
+	query builder.Query
+}
+
+func (r documentUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentUpsertOne) with()             {}
+func (r documentUpsertOne) documentModel()    {}
+func (r documentUpsertOne) documentRelation() {}
+
+func (r documentActions) UpsertOne(
+	params DocumentEqualsUniqueWhereParam,
+) documentUpsertOne {
+	var v documentUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "Document"
+	v.query.Outputs = documentOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r documentUpsertOne) Create(
+
+	_organization DocumentWithPrismaOrganizationSetParam,
+	_name DocumentWithPrismaNameSetParam,
+	_content DocumentWithPrismaContentSetParam,
+
+	optional ...DocumentSetParam,
+) documentUpsertOne {
+	var v documentUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _organization.field())
+	fields = append(fields, _name.field())
+	fields = append(fields, _content.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r documentUpsertOne) Update(
+	params ...DocumentSetParam,
+) documentUpsertOne {
+	var v documentUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r documentUpsertOne) Exec(ctx context.Context) (*DocumentModel, error) {
+	var v DocumentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentUpsertOne) Tx() DocumentUniqueTxResult {
+	v := newDocumentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type documentBlockUpsertOne struct {
+	query builder.Query
+}
+
+func (r documentBlockUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r documentBlockUpsertOne) with()                  {}
+func (r documentBlockUpsertOne) documentBlockModel()    {}
+func (r documentBlockUpsertOne) documentBlockRelation() {}
+
+func (r documentBlockActions) UpsertOne(
+	params DocumentBlockEqualsUniqueWhereParam,
+) documentBlockUpsertOne {
+	var v documentBlockUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "DocumentBlock"
+	v.query.Outputs = documentBlockOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r documentBlockUpsertOne) Create(
+
+	_document DocumentBlockWithPrismaDocumentSetParam,
+	_block DocumentBlockWithPrismaBlockSetParam,
+	_position DocumentBlockWithPrismaPositionSetParam,
+
+	optional ...DocumentBlockSetParam,
+) documentBlockUpsertOne {
+	var v documentBlockUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _document.field())
+	fields = append(fields, _block.field())
+	fields = append(fields, _position.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r documentBlockUpsertOne) Update(
+	params ...DocumentBlockSetParam,
+) documentBlockUpsertOne {
+	var v documentBlockUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r documentBlockUpsertOne) Exec(ctx context.Context) (*DocumentBlockModel, error) {
+	var v DocumentBlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r documentBlockUpsertOne) Tx() DocumentBlockUniqueTxResult {
+	v := newDocumentBlockUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type blockUpsertOne struct {
+	query builder.Query
+}
+
+func (r blockUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r blockUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r blockUpsertOne) with()          {}
+func (r blockUpsertOne) blockModel()    {}
+func (r blockUpsertOne) blockRelation() {}
+
+func (r blockActions) UpsertOne(
+	params BlockEqualsUniqueWhereParam,
+) blockUpsertOne {
+	var v blockUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "Block"
+	v.query.Outputs = blockOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r blockUpsertOne) Create(
+
+	_organization BlockWithPrismaOrganizationSetParam,
+	_type BlockWithPrismaTypeSetParam,
+	_content BlockWithPrismaContentSetParam,
+
+	optional ...BlockSetParam,
+) blockUpsertOne {
+	var v blockUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _organization.field())
+	fields = append(fields, _type.field())
+	fields = append(fields, _content.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r blockUpsertOne) Update(
+	params ...BlockSetParam,
+) blockUpsertOne {
+	var v blockUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r blockUpsertOne) Exec(ctx context.Context) (*BlockModel, error) {
+	var v BlockModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r blockUpsertOne) Tx() BlockUniqueTxResult {
+	v := newBlockUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
