@@ -1,23 +1,27 @@
 datasource db {
-  provider = "postgresql"
-  url      = env("POSTGRES_URI")
+  provider   = "postgresql"
+  url        = env("POSTGRES_URI")
+  extensions = [timescaledb]
 }
 
 generator db {
-  provider = "go run github.com/steebchen/prisma-client-go"
+  provider        = "go run github.com/steebchen/prisma-client-go"
+  previewFeatures = ["postgresqlExtensions", "views"]
 }
 
 model Organization {
-  id         String      @id @default(cuid())
-  created    DateTime    @default(now())
-  updated    DateTime    @updatedAt
-  name       String
-  users      User[]
-  components Component[]
-  tags       Tag[]
-  documents  Document[]
-  Block      Block[]
-  sessions   Session[]
+  id          String      @id @default(cuid())
+  created     DateTime    @default(now())
+  updated     DateTime    @updatedAt
+  name        String
+  description String      @default("") @db.Text
+  users       User[]
+  components  Component[]
+  tags        Tag[]
+  documents   Document[]
+  blocks      Block[]
+  sessions    Session[]
+  changes     Change[]
 
   @@map("organizations")
 }
@@ -114,11 +118,15 @@ model Component {
   organization_id String
   created         DateTime       @default(now())
   updated         DateTime       @updatedAt
+  status          String         @default("draft")
   name            String
+  description     String         @default("") @db.Text
   type            String
   provider        String
   tags            ComponentTag[]
+  changes         Change[]
 
+  @@unique([organization_id, name])
   @@map("components")
 }
 
@@ -131,6 +139,7 @@ model ComponentTag {
   tag          Tag       @relation(fields: [tag_id], references: [id])
   tag_id       String
 
+  @@unique([component_id, tag_id])
   @@map("component_tags")
 }
 
@@ -143,6 +152,7 @@ model Tag {
   name            String
   ComponentTag    ComponentTag[]
 
+  @@unique([organization_id, name])
   @@map("tags")
 }
 
@@ -156,6 +166,7 @@ model Document {
   content         Json
   blocks          DocumentBlock[]
 
+  @@unique([organization_id, name])
   @@map("documents")
 }
 
@@ -183,4 +194,17 @@ model Block {
   documents       DocumentBlock[]
 
   @@map("blocks")
+}
+
+model Change {
+  id              String       @id @default(cuid())
+  organization    Organization @relation(fields: [organization_id], references: [id])
+  organization_id String
+  created         DateTime     @default(now())
+  component       Component    @relation(fields: [component_id], references: [id])
+  component_id    String
+  type            String
+  content         Json
+
+  @@map("changes")
 }

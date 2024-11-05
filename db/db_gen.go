@@ -73,25 +73,29 @@ const (
 const datasources = `[{"name":"db","provider":"postgresql","activeProvider":"postgresql","url":{"fromEnvVar":"POSTGRES_URI","value":""},"config":null}]`
 
 const schema = `datasource db {
-  provider = "postgresql"
-  url      = env("POSTGRES_URI")
+  provider   = "postgresql"
+  url        = env("POSTGRES_URI")
+  extensions = [timescaledb]
 }
 
 generator db {
-  provider = "go run github.com/steebchen/prisma-client-go"
+  provider        = "go run github.com/steebchen/prisma-client-go"
+  previewFeatures = ["postgresqlExtensions", "views"]
 }
 
 model Organization {
-  id         String      @id @default(cuid())
-  created    DateTime    @default(now())
-  updated    DateTime    @updatedAt
-  name       String
-  users      User[]
-  components Component[]
-  tags       Tag[]
-  documents  Document[]
-  Block      Block[]
-  sessions   Session[]
+  id          String      @id @default(cuid())
+  created     DateTime    @default(now())
+  updated     DateTime    @updatedAt
+  name        String
+  description String      @default("") @db.Text
+  users       User[]
+  components  Component[]
+  tags        Tag[]
+  documents   Document[]
+  blocks      Block[]
+  sessions    Session[]
+  changes     Change[]
 
   @@map("organizations")
 }
@@ -188,11 +192,15 @@ model Component {
   organization_id String
   created         DateTime       @default(now())
   updated         DateTime       @updatedAt
+  status          String         @default("draft")
   name            String
+  description     String         @default("") @db.Text
   type            String
   provider        String
   tags            ComponentTag[]
+  changes         Change[]
 
+  @@unique([organization_id, name])
   @@map("components")
 }
 
@@ -205,6 +213,7 @@ model ComponentTag {
   tag          Tag       @relation(fields: [tag_id], references: [id])
   tag_id       String
 
+  @@unique([component_id, tag_id])
   @@map("component_tags")
 }
 
@@ -217,6 +226,7 @@ model Tag {
   name            String
   ComponentTag    ComponentTag[]
 
+  @@unique([organization_id, name])
   @@map("tags")
 }
 
@@ -230,6 +240,7 @@ model Document {
   content         Json
   blocks          DocumentBlock[]
 
+  @@unique([organization_id, name])
   @@map("documents")
 }
 
@@ -257,6 +268,19 @@ model Block {
   documents       DocumentBlock[]
 
   @@map("blocks")
+}
+
+model Change {
+  id              String       @id @default(cuid())
+  organization    Organization @relation(fields: [organization_id], references: [id])
+  organization_id String
+  created         DateTime     @default(now())
+  component       Component    @relation(fields: [component_id], references: [id])
+  component_id    String
+  type            String
+  content         Json
+
+  @@map("changes")
 }
 `
 const schemaDatasourceURL = ""
@@ -343,6 +367,7 @@ func newClient() *PrismaClient {
 	c.Document = documentActions{client: c}
 	c.DocumentBlock = documentBlockActions{client: c}
 	c.Block = blockActions{client: c}
+	c.Change = changeActions{client: c}
 
 	c.Prisma = &PrismaActions{
 		Raw: &raw.Raw{Engine: c},
@@ -395,6 +420,8 @@ type PrismaClient struct {
 	DocumentBlock documentBlockActions
 	// Block provides access to CRUD methods.
 	Block blockActions
+	// Change provides access to CRUD methods.
+	Change changeActions
 }
 
 // --- template enums.gotpl ---
@@ -411,10 +438,11 @@ const (
 type OrganizationScalarFieldEnum string
 
 const (
-	OrganizationScalarFieldEnumID      OrganizationScalarFieldEnum = "id"
-	OrganizationScalarFieldEnumCreated OrganizationScalarFieldEnum = "created"
-	OrganizationScalarFieldEnumUpdated OrganizationScalarFieldEnum = "updated"
-	OrganizationScalarFieldEnumName    OrganizationScalarFieldEnum = "name"
+	OrganizationScalarFieldEnumID          OrganizationScalarFieldEnum = "id"
+	OrganizationScalarFieldEnumCreated     OrganizationScalarFieldEnum = "created"
+	OrganizationScalarFieldEnumUpdated     OrganizationScalarFieldEnum = "updated"
+	OrganizationScalarFieldEnumName        OrganizationScalarFieldEnum = "name"
+	OrganizationScalarFieldEnumDescription OrganizationScalarFieldEnum = "description"
 )
 
 type UserScalarFieldEnum string
@@ -497,7 +525,9 @@ const (
 	ComponentScalarFieldEnumOrganizationID ComponentScalarFieldEnum = "organization_id"
 	ComponentScalarFieldEnumCreated        ComponentScalarFieldEnum = "created"
 	ComponentScalarFieldEnumUpdated        ComponentScalarFieldEnum = "updated"
+	ComponentScalarFieldEnumStatus         ComponentScalarFieldEnum = "status"
 	ComponentScalarFieldEnumName           ComponentScalarFieldEnum = "name"
+	ComponentScalarFieldEnumDescription    ComponentScalarFieldEnum = "description"
 	ComponentScalarFieldEnumType           ComponentScalarFieldEnum = "type"
 	ComponentScalarFieldEnumProvider       ComponentScalarFieldEnum = "provider"
 )
@@ -553,6 +583,17 @@ const (
 	BlockScalarFieldEnumUpdated        BlockScalarFieldEnum = "updated"
 	BlockScalarFieldEnumType           BlockScalarFieldEnum = "type"
 	BlockScalarFieldEnumContent        BlockScalarFieldEnum = "content"
+)
+
+type ChangeScalarFieldEnum string
+
+const (
+	ChangeScalarFieldEnumID             ChangeScalarFieldEnum = "id"
+	ChangeScalarFieldEnumOrganizationID ChangeScalarFieldEnum = "organization_id"
+	ChangeScalarFieldEnumCreated        ChangeScalarFieldEnum = "created"
+	ChangeScalarFieldEnumComponentID    ChangeScalarFieldEnum = "component_id"
+	ChangeScalarFieldEnumType           ChangeScalarFieldEnum = "type"
+	ChangeScalarFieldEnumContent        ChangeScalarFieldEnum = "content"
 )
 
 type SortOrder string
@@ -624,6 +665,8 @@ const organizationFieldUpdated organizationPrismaFields = "updated"
 
 const organizationFieldName organizationPrismaFields = "name"
 
+const organizationFieldDescription organizationPrismaFields = "description"
+
 const organizationFieldUsers organizationPrismaFields = "users"
 
 const organizationFieldComponents organizationPrismaFields = "components"
@@ -632,9 +675,11 @@ const organizationFieldTags organizationPrismaFields = "tags"
 
 const organizationFieldDocuments organizationPrismaFields = "documents"
 
-const organizationFieldBlock organizationPrismaFields = "Block"
+const organizationFieldBlocks organizationPrismaFields = "blocks"
 
 const organizationFieldSessions organizationPrismaFields = "sessions"
+
+const organizationFieldChanges organizationPrismaFields = "changes"
 
 type userPrismaFields = prismaFields
 
@@ -762,13 +807,19 @@ const componentFieldCreated componentPrismaFields = "created"
 
 const componentFieldUpdated componentPrismaFields = "updated"
 
+const componentFieldStatus componentPrismaFields = "status"
+
 const componentFieldName componentPrismaFields = "name"
+
+const componentFieldDescription componentPrismaFields = "description"
 
 const componentFieldType componentPrismaFields = "type"
 
 const componentFieldProvider componentPrismaFields = "provider"
 
 const componentFieldTags componentPrismaFields = "tags"
+
+const componentFieldChanges componentPrismaFields = "changes"
 
 type componentTagPrismaFields = prismaFields
 
@@ -856,6 +907,24 @@ const blockFieldContent blockPrismaFields = "content"
 
 const blockFieldDocuments blockPrismaFields = "documents"
 
+type changePrismaFields = prismaFields
+
+const changeFieldID changePrismaFields = "id"
+
+const changeFieldOrganization changePrismaFields = "organization"
+
+const changeFieldOrganizationID changePrismaFields = "organization_id"
+
+const changeFieldCreated changePrismaFields = "created"
+
+const changeFieldComponent changePrismaFields = "component"
+
+const changeFieldComponentID changePrismaFields = "component_id"
+
+const changeFieldType changePrismaFields = "type"
+
+const changeFieldContent changePrismaFields = "content"
+
 // --- template mock.gotpl ---
 func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 	expectations := new([]mock.Expectation)
@@ -922,6 +991,10 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 		mock: m,
 	}
 
+	m.Change = changeMock{
+		mock: m,
+	}
+
 	return pc, m, m.Ensure
 }
 
@@ -955,6 +1028,8 @@ type Mock struct {
 	DocumentBlock documentBlockMock
 
 	Block blockMock
+
+	Change changeMock
 }
 
 type organizationMock struct {
@@ -1545,6 +1620,48 @@ func (m *blockMockExec) Errors(err error) {
 	})
 }
 
+type changeMock struct {
+	mock *Mock
+}
+
+type ChangeMockExpectParam interface {
+	ExtractQuery() builder.Query
+	changeModel()
+}
+
+func (m *changeMock) Expect(query ChangeMockExpectParam) *changeMockExec {
+	return &changeMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type changeMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *changeMockExec) Returns(v ChangeModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *changeMockExec) ReturnsMany(v []ChangeModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *changeMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
 // --- template models.gotpl ---
 
 // OrganizationModel represents the Organization model and is a wrapper for accessing fields and methods
@@ -1555,18 +1672,20 @@ type OrganizationModel struct {
 
 // InnerOrganization holds the actual data
 type InnerOrganization struct {
-	ID      string   `json:"id"`
-	Created DateTime `json:"created"`
-	Updated DateTime `json:"updated"`
-	Name    string   `json:"name"`
+	ID          string   `json:"id"`
+	Created     DateTime `json:"created"`
+	Updated     DateTime `json:"updated"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
 }
 
 // RawOrganizationModel is a struct for Organization when used in raw queries
 type RawOrganizationModel struct {
-	ID      RawString   `json:"id"`
-	Created RawDateTime `json:"created"`
-	Updated RawDateTime `json:"updated"`
-	Name    RawString   `json:"name"`
+	ID          RawString   `json:"id"`
+	Created     RawDateTime `json:"created"`
+	Updated     RawDateTime `json:"updated"`
+	Name        RawString   `json:"name"`
+	Description RawString   `json:"description"`
 }
 
 // RelationsOrganization holds the relation data separately
@@ -1575,8 +1694,9 @@ type RelationsOrganization struct {
 	Components []ComponentModel `json:"components,omitempty"`
 	Tags       []TagModel       `json:"tags,omitempty"`
 	Documents  []DocumentModel  `json:"documents,omitempty"`
-	Block      []BlockModel     `json:"Block,omitempty"`
+	Blocks     []BlockModel     `json:"blocks,omitempty"`
 	Sessions   []SessionModel   `json:"sessions,omitempty"`
+	Changes    []ChangeModel    `json:"changes,omitempty"`
 }
 
 func (r OrganizationModel) Users() (value []UserModel) {
@@ -1607,11 +1727,11 @@ func (r OrganizationModel) Documents() (value []DocumentModel) {
 	return r.RelationsOrganization.Documents
 }
 
-func (r OrganizationModel) Block() (value []BlockModel) {
-	if r.RelationsOrganization.Block == nil {
-		panic("attempted to access block but did not fetch it using the .With() syntax")
+func (r OrganizationModel) Blocks() (value []BlockModel) {
+	if r.RelationsOrganization.Blocks == nil {
+		panic("attempted to access blocks but did not fetch it using the .With() syntax")
 	}
-	return r.RelationsOrganization.Block
+	return r.RelationsOrganization.Blocks
 }
 
 func (r OrganizationModel) Sessions() (value []SessionModel) {
@@ -1619,6 +1739,13 @@ func (r OrganizationModel) Sessions() (value []SessionModel) {
 		panic("attempted to access sessions but did not fetch it using the .With() syntax")
 	}
 	return r.RelationsOrganization.Sessions
+}
+
+func (r OrganizationModel) Changes() (value []ChangeModel) {
+	if r.RelationsOrganization.Changes == nil {
+		panic("attempted to access changes but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsOrganization.Changes
 }
 
 // UserModel represents the User model and is a wrapper for accessing fields and methods
@@ -1931,7 +2058,9 @@ type InnerComponent struct {
 	OrganizationID string   `json:"organization_id"`
 	Created        DateTime `json:"created"`
 	Updated        DateTime `json:"updated"`
+	Status         string   `json:"status"`
 	Name           string   `json:"name"`
+	Description    string   `json:"description"`
 	Type           string   `json:"type"`
 	Provider       string   `json:"provider"`
 }
@@ -1942,7 +2071,9 @@ type RawComponentModel struct {
 	OrganizationID RawString   `json:"organization_id"`
 	Created        RawDateTime `json:"created"`
 	Updated        RawDateTime `json:"updated"`
+	Status         RawString   `json:"status"`
 	Name           RawString   `json:"name"`
+	Description    RawString   `json:"description"`
 	Type           RawString   `json:"type"`
 	Provider       RawString   `json:"provider"`
 }
@@ -1951,6 +2082,7 @@ type RawComponentModel struct {
 type RelationsComponent struct {
 	Organization *OrganizationModel  `json:"organization,omitempty"`
 	Tags         []ComponentTagModel `json:"tags,omitempty"`
+	Changes      []ChangeModel       `json:"changes,omitempty"`
 }
 
 func (r ComponentModel) Organization() (value *OrganizationModel) {
@@ -1965,6 +2097,13 @@ func (r ComponentModel) Tags() (value []ComponentTagModel) {
 		panic("attempted to access tags but did not fetch it using the .With() syntax")
 	}
 	return r.RelationsComponent.Tags
+}
+
+func (r ComponentModel) Changes() (value []ChangeModel) {
+	if r.RelationsComponent.Changes == nil {
+		panic("attempted to access changes but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsComponent.Changes
 }
 
 // ComponentTagModel represents the ComponentTag model and is a wrapper for accessing fields and methods
@@ -2193,6 +2332,52 @@ func (r BlockModel) Documents() (value []DocumentBlockModel) {
 	return r.RelationsBlock.Documents
 }
 
+// ChangeModel represents the Change model and is a wrapper for accessing fields and methods
+type ChangeModel struct {
+	InnerChange
+	RelationsChange
+}
+
+// InnerChange holds the actual data
+type InnerChange struct {
+	ID             string   `json:"id"`
+	OrganizationID string   `json:"organization_id"`
+	Created        DateTime `json:"created"`
+	ComponentID    string   `json:"component_id"`
+	Type           string   `json:"type"`
+	Content        JSON     `json:"content"`
+}
+
+// RawChangeModel is a struct for Change when used in raw queries
+type RawChangeModel struct {
+	ID             RawString   `json:"id"`
+	OrganizationID RawString   `json:"organization_id"`
+	Created        RawDateTime `json:"created"`
+	ComponentID    RawString   `json:"component_id"`
+	Type           RawString   `json:"type"`
+	Content        RawJSON     `json:"content"`
+}
+
+// RelationsChange holds the relation data separately
+type RelationsChange struct {
+	Organization *OrganizationModel `json:"organization,omitempty"`
+	Component    *ComponentModel    `json:"component,omitempty"`
+}
+
+func (r ChangeModel) Organization() (value *OrganizationModel) {
+	if r.RelationsChange.Organization == nil {
+		panic("attempted to access organization but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsChange.Organization
+}
+
+func (r ChangeModel) Component() (value *ComponentModel) {
+	if r.RelationsChange.Component == nil {
+		panic("attempted to access component but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsChange.Component
+}
+
 // --- template query.gotpl ---
 
 // Organization acts as a namespaces to access query methods for the Organization model
@@ -2221,6 +2406,11 @@ type organizationQuery struct {
 	// @required
 	Name organizationQueryNameString
 
+	// Description
+	//
+	// @required
+	Description organizationQueryDescriptionString
+
 	Users organizationQueryUsersRelations
 
 	Components organizationQueryComponentsRelations
@@ -2229,9 +2419,11 @@ type organizationQuery struct {
 
 	Documents organizationQueryDocumentsRelations
 
-	Block organizationQueryBlockRelations
+	Blocks organizationQueryBlocksRelations
 
 	Sessions organizationQuerySessionsRelations
+
+	Changes organizationQueryChangesRelations
 }
 
 func (organizationQuery) Not(params ...OrganizationWhereParam) organizationDefaultParam {
@@ -3602,6 +3794,353 @@ func (r organizationQueryNameString) Field() organizationPrismaFields {
 }
 
 // base struct
+type organizationQueryDescriptionString struct{}
+
+// Set the required value of Description
+func (r organizationQueryDescriptionString) Set(value string) organizationSetParam {
+
+	return organizationSetParam{
+		data: builder.Field{
+			Name:  "description",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Description dynamically
+func (r organizationQueryDescriptionString) SetIfPresent(value *String) organizationSetParam {
+	if value == nil {
+		return organizationSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r organizationQueryDescriptionString) Equals(value string) organizationWithPrismaDescriptionEqualsParam {
+
+	return organizationWithPrismaDescriptionEqualsParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQueryDescriptionString) EqualsIfPresent(value *string) organizationWithPrismaDescriptionEqualsParam {
+	if value == nil {
+		return organizationWithPrismaDescriptionEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r organizationQueryDescriptionString) Order(direction SortOrder) organizationDefaultParam {
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name:  "description",
+			Value: direction,
+		},
+	}
+}
+
+func (r organizationQueryDescriptionString) Cursor(cursor string) organizationCursorParam {
+	return organizationCursorParam{
+		data: builder.Field{
+			Name:  "description",
+			Value: cursor,
+		},
+	}
+}
+
+func (r organizationQueryDescriptionString) In(value []string) organizationDefaultParam {
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQueryDescriptionString) InIfPresent(value []string) organizationDefaultParam {
+	if value == nil {
+		return organizationDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r organizationQueryDescriptionString) NotIn(value []string) organizationDefaultParam {
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQueryDescriptionString) NotInIfPresent(value []string) organizationDefaultParam {
+	if value == nil {
+		return organizationDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r organizationQueryDescriptionString) Lt(value string) organizationDefaultParam {
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQueryDescriptionString) LtIfPresent(value *string) organizationDefaultParam {
+	if value == nil {
+		return organizationDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r organizationQueryDescriptionString) Lte(value string) organizationDefaultParam {
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQueryDescriptionString) LteIfPresent(value *string) organizationDefaultParam {
+	if value == nil {
+		return organizationDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r organizationQueryDescriptionString) Gt(value string) organizationDefaultParam {
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQueryDescriptionString) GtIfPresent(value *string) organizationDefaultParam {
+	if value == nil {
+		return organizationDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r organizationQueryDescriptionString) Gte(value string) organizationDefaultParam {
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQueryDescriptionString) GteIfPresent(value *string) organizationDefaultParam {
+	if value == nil {
+		return organizationDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r organizationQueryDescriptionString) Contains(value string) organizationDefaultParam {
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQueryDescriptionString) ContainsIfPresent(value *string) organizationDefaultParam {
+	if value == nil {
+		return organizationDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r organizationQueryDescriptionString) StartsWith(value string) organizationDefaultParam {
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQueryDescriptionString) StartsWithIfPresent(value *string) organizationDefaultParam {
+	if value == nil {
+		return organizationDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r organizationQueryDescriptionString) EndsWith(value string) organizationDefaultParam {
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQueryDescriptionString) EndsWithIfPresent(value *string) organizationDefaultParam {
+	if value == nil {
+		return organizationDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r organizationQueryDescriptionString) Mode(value QueryMode) organizationDefaultParam {
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQueryDescriptionString) ModeIfPresent(value *QueryMode) organizationDefaultParam {
+	if value == nil {
+		return organizationDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r organizationQueryDescriptionString) Not(value string) organizationDefaultParam {
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQueryDescriptionString) NotIfPresent(value *string) organizationDefaultParam {
+	if value == nil {
+		return organizationDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r organizationQueryDescriptionString) HasPrefix(value string) organizationDefaultParam {
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r organizationQueryDescriptionString) HasPrefixIfPresent(value *string) organizationDefaultParam {
+	if value == nil {
+		return organizationDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r organizationQueryDescriptionString) HasSuffix(value string) organizationDefaultParam {
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r organizationQueryDescriptionString) HasSuffixIfPresent(value *string) organizationDefaultParam {
+	if value == nil {
+		return organizationDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r organizationQueryDescriptionString) Field() organizationPrismaFields {
+	return organizationFieldDescription
+}
+
+// base struct
 type organizationQueryUsersUser struct{}
 
 type organizationQueryUsersRelations struct{}
@@ -4290,15 +4829,15 @@ func (r organizationQueryDocumentsDocument) Field() organizationPrismaFields {
 }
 
 // base struct
-type organizationQueryBlockBlock struct{}
+type organizationQueryBlocksBlock struct{}
 
-type organizationQueryBlockRelations struct{}
+type organizationQueryBlocksRelations struct{}
 
-// Organization -> Block
+// Organization -> Blocks
 //
 // @relation
 // @required
-func (organizationQueryBlockRelations) Some(
+func (organizationQueryBlocksRelations) Some(
 	params ...BlockWhereParam,
 ) organizationDefaultParam {
 	var fields []builder.Field
@@ -4309,7 +4848,7 @@ func (organizationQueryBlockRelations) Some(
 
 	return organizationDefaultParam{
 		data: builder.Field{
-			Name: "Block",
+			Name: "blocks",
 			Fields: []builder.Field{
 				{
 					Name:   "some",
@@ -4320,11 +4859,11 @@ func (organizationQueryBlockRelations) Some(
 	}
 }
 
-// Organization -> Block
+// Organization -> Blocks
 //
 // @relation
 // @required
-func (organizationQueryBlockRelations) Every(
+func (organizationQueryBlocksRelations) Every(
 	params ...BlockWhereParam,
 ) organizationDefaultParam {
 	var fields []builder.Field
@@ -4335,7 +4874,7 @@ func (organizationQueryBlockRelations) Every(
 
 	return organizationDefaultParam{
 		data: builder.Field{
-			Name: "Block",
+			Name: "blocks",
 			Fields: []builder.Field{
 				{
 					Name:   "every",
@@ -4346,11 +4885,11 @@ func (organizationQueryBlockRelations) Every(
 	}
 }
 
-// Organization -> Block
+// Organization -> Blocks
 //
 // @relation
 // @required
-func (organizationQueryBlockRelations) None(
+func (organizationQueryBlocksRelations) None(
 	params ...BlockWhereParam,
 ) organizationDefaultParam {
 	var fields []builder.Field
@@ -4361,7 +4900,7 @@ func (organizationQueryBlockRelations) None(
 
 	return organizationDefaultParam{
 		data: builder.Field{
-			Name: "Block",
+			Name: "blocks",
 			Fields: []builder.Field{
 				{
 					Name:   "none",
@@ -4372,15 +4911,15 @@ func (organizationQueryBlockRelations) None(
 	}
 }
 
-func (organizationQueryBlockRelations) Fetch(
+func (organizationQueryBlocksRelations) Fetch(
 
 	params ...BlockWhereParam,
 
-) organizationToBlockFindMany {
-	var v organizationToBlockFindMany
+) organizationToBlocksFindMany {
+	var v organizationToBlocksFindMany
 
 	v.query.Operation = "query"
-	v.query.Method = "Block"
+	v.query.Method = "blocks"
 	v.query.Outputs = blockOutput
 
 	var where []builder.Field
@@ -4406,7 +4945,7 @@ func (organizationQueryBlockRelations) Fetch(
 	return v
 }
 
-func (r organizationQueryBlockRelations) Link(
+func (r organizationQueryBlocksRelations) Link(
 	params ...BlockWhereParam,
 ) organizationSetParam {
 	var fields []builder.Field
@@ -4417,7 +4956,7 @@ func (r organizationQueryBlockRelations) Link(
 
 	return organizationSetParam{
 		data: builder.Field{
-			Name: "Block",
+			Name: "blocks",
 			Fields: []builder.Field{
 				{
 					Name:   "connect",
@@ -4431,7 +4970,7 @@ func (r organizationQueryBlockRelations) Link(
 	}
 }
 
-func (r organizationQueryBlockRelations) Unlink(
+func (r organizationQueryBlocksRelations) Unlink(
 	params ...BlockWhereParam,
 ) organizationSetParam {
 	var v organizationSetParam
@@ -4442,7 +4981,7 @@ func (r organizationQueryBlockRelations) Unlink(
 	}
 	v = organizationSetParam{
 		data: builder.Field{
-			Name: "Block",
+			Name: "blocks",
 			Fields: []builder.Field{
 				{
 					Name:     "disconnect",
@@ -4457,8 +4996,8 @@ func (r organizationQueryBlockRelations) Unlink(
 	return v
 }
 
-func (r organizationQueryBlockBlock) Field() organizationPrismaFields {
-	return organizationFieldBlock
+func (r organizationQueryBlocksBlock) Field() organizationPrismaFields {
+	return organizationFieldBlocks
 }
 
 // base struct
@@ -4631,6 +5170,178 @@ func (r organizationQuerySessionsRelations) Unlink(
 
 func (r organizationQuerySessionsSession) Field() organizationPrismaFields {
 	return organizationFieldSessions
+}
+
+// base struct
+type organizationQueryChangesChange struct{}
+
+type organizationQueryChangesRelations struct{}
+
+// Organization -> Changes
+//
+// @relation
+// @required
+func (organizationQueryChangesRelations) Some(
+	params ...ChangeWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "changes",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Organization -> Changes
+//
+// @relation
+// @required
+func (organizationQueryChangesRelations) Every(
+	params ...ChangeWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "changes",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Organization -> Changes
+//
+// @relation
+// @required
+func (organizationQueryChangesRelations) None(
+	params ...ChangeWhereParam,
+) organizationDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationDefaultParam{
+		data: builder.Field{
+			Name: "changes",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (organizationQueryChangesRelations) Fetch(
+
+	params ...ChangeWhereParam,
+
+) organizationToChangesFindMany {
+	var v organizationToChangesFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "changes"
+	v.query.Outputs = changeOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r organizationQueryChangesRelations) Link(
+	params ...ChangeWhereParam,
+) organizationSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return organizationSetParam{
+		data: builder.Field{
+			Name: "changes",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r organizationQueryChangesRelations) Unlink(
+	params ...ChangeWhereParam,
+) organizationSetParam {
+	var v organizationSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = organizationSetParam{
+		data: builder.Field{
+			Name: "changes",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r organizationQueryChangesChange) Field() organizationPrismaFields {
+	return organizationFieldChanges
 }
 
 // User acts as a namespaces to access query methods for the User model
@@ -19497,10 +20208,20 @@ type componentQuery struct {
 	// @required
 	Updated componentQueryUpdatedDateTime
 
+	// Status
+	//
+	// @required
+	Status componentQueryStatusString
+
 	// Name
 	//
 	// @required
 	Name componentQueryNameString
+
+	// Description
+	//
+	// @required
+	Description componentQueryDescriptionString
 
 	// Type
 	//
@@ -19513,6 +20234,8 @@ type componentQuery struct {
 	Provider componentQueryProviderString
 
 	Tags componentQueryTagsRelations
+
+	Changes componentQueryChangesRelations
 }
 
 func (componentQuery) Not(params ...ComponentWhereParam) componentDefaultParam {
@@ -19562,6 +20285,24 @@ func (componentQuery) And(params ...ComponentWhereParam) componentDefaultParam {
 			List:     true,
 			WrapList: true,
 			Fields:   fields,
+		},
+	}
+}
+
+func (componentQuery) OrganizationIDName(
+	_organizationID ComponentWithPrismaOrganizationIDWhereParam,
+
+	_name ComponentWithPrismaNameWhereParam,
+) ComponentEqualsUniqueWhereParam {
+	var fields []builder.Field
+
+	fields = append(fields, _organizationID.field())
+	fields = append(fields, _name.field())
+
+	return componentEqualsUniqueParam{
+		data: builder.Field{
+			Name:   "organization_id_name",
+			Fields: builder.TransformEquals(fields),
 		},
 	}
 }
@@ -20971,6 +21712,353 @@ func (r componentQueryUpdatedDateTime) Field() componentPrismaFields {
 }
 
 // base struct
+type componentQueryStatusString struct{}
+
+// Set the required value of Status
+func (r componentQueryStatusString) Set(value string) componentSetParam {
+
+	return componentSetParam{
+		data: builder.Field{
+			Name:  "status",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Status dynamically
+func (r componentQueryStatusString) SetIfPresent(value *String) componentSetParam {
+	if value == nil {
+		return componentSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r componentQueryStatusString) Equals(value string) componentWithPrismaStatusEqualsParam {
+
+	return componentWithPrismaStatusEqualsParam{
+		data: builder.Field{
+			Name: "status",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryStatusString) EqualsIfPresent(value *string) componentWithPrismaStatusEqualsParam {
+	if value == nil {
+		return componentWithPrismaStatusEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r componentQueryStatusString) Order(direction SortOrder) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name:  "status",
+			Value: direction,
+		},
+	}
+}
+
+func (r componentQueryStatusString) Cursor(cursor string) componentCursorParam {
+	return componentCursorParam{
+		data: builder.Field{
+			Name:  "status",
+			Value: cursor,
+		},
+	}
+}
+
+func (r componentQueryStatusString) In(value []string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "status",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryStatusString) InIfPresent(value []string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r componentQueryStatusString) NotIn(value []string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "status",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryStatusString) NotInIfPresent(value []string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r componentQueryStatusString) Lt(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "status",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryStatusString) LtIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r componentQueryStatusString) Lte(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "status",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryStatusString) LteIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r componentQueryStatusString) Gt(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "status",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryStatusString) GtIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r componentQueryStatusString) Gte(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "status",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryStatusString) GteIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r componentQueryStatusString) Contains(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "status",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryStatusString) ContainsIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r componentQueryStatusString) StartsWith(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "status",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryStatusString) StartsWithIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r componentQueryStatusString) EndsWith(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "status",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryStatusString) EndsWithIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r componentQueryStatusString) Mode(value QueryMode) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "status",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryStatusString) ModeIfPresent(value *QueryMode) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r componentQueryStatusString) Not(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "status",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryStatusString) NotIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r componentQueryStatusString) HasPrefix(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "status",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r componentQueryStatusString) HasPrefixIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r componentQueryStatusString) HasSuffix(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "status",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r componentQueryStatusString) HasSuffixIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r componentQueryStatusString) Field() componentPrismaFields {
+	return componentFieldStatus
+}
+
+// base struct
 type componentQueryNameString struct{}
 
 // Set the required value of Name
@@ -21315,6 +22403,353 @@ func (r componentQueryNameString) HasSuffixIfPresent(value *string) componentDef
 
 func (r componentQueryNameString) Field() componentPrismaFields {
 	return componentFieldName
+}
+
+// base struct
+type componentQueryDescriptionString struct{}
+
+// Set the required value of Description
+func (r componentQueryDescriptionString) Set(value string) componentSetParam {
+
+	return componentSetParam{
+		data: builder.Field{
+			Name:  "description",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Description dynamically
+func (r componentQueryDescriptionString) SetIfPresent(value *String) componentSetParam {
+	if value == nil {
+		return componentSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r componentQueryDescriptionString) Equals(value string) componentWithPrismaDescriptionEqualsParam {
+
+	return componentWithPrismaDescriptionEqualsParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryDescriptionString) EqualsIfPresent(value *string) componentWithPrismaDescriptionEqualsParam {
+	if value == nil {
+		return componentWithPrismaDescriptionEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r componentQueryDescriptionString) Order(direction SortOrder) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name:  "description",
+			Value: direction,
+		},
+	}
+}
+
+func (r componentQueryDescriptionString) Cursor(cursor string) componentCursorParam {
+	return componentCursorParam{
+		data: builder.Field{
+			Name:  "description",
+			Value: cursor,
+		},
+	}
+}
+
+func (r componentQueryDescriptionString) In(value []string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryDescriptionString) InIfPresent(value []string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r componentQueryDescriptionString) NotIn(value []string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryDescriptionString) NotInIfPresent(value []string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r componentQueryDescriptionString) Lt(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryDescriptionString) LtIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r componentQueryDescriptionString) Lte(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryDescriptionString) LteIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r componentQueryDescriptionString) Gt(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryDescriptionString) GtIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r componentQueryDescriptionString) Gte(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryDescriptionString) GteIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r componentQueryDescriptionString) Contains(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryDescriptionString) ContainsIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r componentQueryDescriptionString) StartsWith(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryDescriptionString) StartsWithIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r componentQueryDescriptionString) EndsWith(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryDescriptionString) EndsWithIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r componentQueryDescriptionString) Mode(value QueryMode) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryDescriptionString) ModeIfPresent(value *QueryMode) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r componentQueryDescriptionString) Not(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryDescriptionString) NotIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r componentQueryDescriptionString) HasPrefix(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r componentQueryDescriptionString) HasPrefixIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r componentQueryDescriptionString) HasSuffix(value string) componentDefaultParam {
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "description",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r componentQueryDescriptionString) HasSuffixIfPresent(value *string) componentDefaultParam {
+	if value == nil {
+		return componentDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r componentQueryDescriptionString) Field() componentPrismaFields {
+	return componentFieldDescription
 }
 
 // base struct
@@ -22183,6 +23618,178 @@ func (r componentQueryTagsComponentTag) Field() componentPrismaFields {
 	return componentFieldTags
 }
 
+// base struct
+type componentQueryChangesChange struct{}
+
+type componentQueryChangesRelations struct{}
+
+// Component -> Changes
+//
+// @relation
+// @required
+func (componentQueryChangesRelations) Some(
+	params ...ChangeWhereParam,
+) componentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "changes",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Component -> Changes
+//
+// @relation
+// @required
+func (componentQueryChangesRelations) Every(
+	params ...ChangeWhereParam,
+) componentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "changes",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Component -> Changes
+//
+// @relation
+// @required
+func (componentQueryChangesRelations) None(
+	params ...ChangeWhereParam,
+) componentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return componentDefaultParam{
+		data: builder.Field{
+			Name: "changes",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (componentQueryChangesRelations) Fetch(
+
+	params ...ChangeWhereParam,
+
+) componentToChangesFindMany {
+	var v componentToChangesFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "changes"
+	v.query.Outputs = changeOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r componentQueryChangesRelations) Link(
+	params ...ChangeWhereParam,
+) componentSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return componentSetParam{
+		data: builder.Field{
+			Name: "changes",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r componentQueryChangesRelations) Unlink(
+	params ...ChangeWhereParam,
+) componentSetParam {
+	var v componentSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = componentSetParam{
+		data: builder.Field{
+			Name: "changes",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r componentQueryChangesChange) Field() componentPrismaFields {
+	return componentFieldChanges
+}
+
 // ComponentTag acts as a namespaces to access query methods for the ComponentTag model
 var ComponentTag = componentTagQuery{}
 
@@ -22266,6 +23873,24 @@ func (componentTagQuery) And(params ...ComponentTagWhereParam) componentTagDefau
 			List:     true,
 			WrapList: true,
 			Fields:   fields,
+		},
+	}
+}
+
+func (componentTagQuery) ComponentIDTagID(
+	_componentID ComponentTagWithPrismaComponentIDWhereParam,
+
+	_tagID ComponentTagWithPrismaTagIDWhereParam,
+) ComponentTagEqualsUniqueWhereParam {
+	var fields []builder.Field
+
+	fields = append(fields, _componentID.field())
+	fields = append(fields, _tagID.field())
+
+	return componentTagEqualsUniqueParam{
+		data: builder.Field{
+			Name:   "component_id_tag_id",
+			Fields: builder.TransformEquals(fields),
 		},
 	}
 }
@@ -24192,6 +25817,24 @@ func (tagQuery) And(params ...TagWhereParam) tagDefaultParam {
 			List:     true,
 			WrapList: true,
 			Fields:   fields,
+		},
+	}
+}
+
+func (tagQuery) OrganizationIDName(
+	_organizationID TagWithPrismaOrganizationIDWhereParam,
+
+	_name TagWithPrismaNameWhereParam,
+) TagEqualsUniqueWhereParam {
+	var fields []builder.Field
+
+	fields = append(fields, _organizationID.field())
+	fields = append(fields, _name.field())
+
+	return tagEqualsUniqueParam{
+		data: builder.Field{
+			Name:   "organization_id_name",
+			Fields: builder.TransformEquals(fields),
 		},
 	}
 }
@@ -26207,6 +27850,24 @@ func (documentQuery) And(params ...DocumentWhereParam) documentDefaultParam {
 			List:     true,
 			WrapList: true,
 			Fields:   fields,
+		},
+	}
+}
+
+func (documentQuery) OrganizationIDName(
+	_organizationID DocumentWithPrismaOrganizationIDWhereParam,
+
+	_name DocumentWithPrismaNameWhereParam,
+) DocumentEqualsUniqueWhereParam {
+	var fields []builder.Field
+
+	fields = append(fields, _organizationID.field())
+	fields = append(fields, _name.field())
+
+	return documentEqualsUniqueParam{
+		data: builder.Field{
+			Name:   "organization_id_name",
+			Fields: builder.TransformEquals(fields),
 		},
 	}
 }
@@ -33119,6 +34780,2293 @@ func (r blockQueryDocumentsDocumentBlock) Field() blockPrismaFields {
 	return blockFieldDocuments
 }
 
+// Change acts as a namespaces to access query methods for the Change model
+var Change = changeQuery{}
+
+// changeQuery exposes query functions for the change model
+type changeQuery struct {
+
+	// ID
+	//
+	// @required
+	ID changeQueryIDString
+
+	Organization changeQueryOrganizationRelations
+
+	// OrganizationID
+	//
+	// @required
+	OrganizationID changeQueryOrganizationIDString
+
+	// Created
+	//
+	// @required
+	Created changeQueryCreatedDateTime
+
+	Component changeQueryComponentRelations
+
+	// ComponentID
+	//
+	// @required
+	ComponentID changeQueryComponentIDString
+
+	// Type
+	//
+	// @required
+	Type changeQueryTypeString
+
+	// Content
+	//
+	// @required
+	Content changeQueryContentJson
+}
+
+func (changeQuery) Not(params ...ChangeWhereParam) changeDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return changeDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (changeQuery) Or(params ...ChangeWhereParam) changeDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return changeDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (changeQuery) And(params ...ChangeWhereParam) changeDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return changeDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+// base struct
+type changeQueryIDString struct{}
+
+// Set the required value of ID
+func (r changeQueryIDString) Set(value string) changeSetParam {
+
+	return changeSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r changeQueryIDString) SetIfPresent(value *String) changeSetParam {
+	if value == nil {
+		return changeSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r changeQueryIDString) Equals(value string) changeWithPrismaIDEqualsUniqueParam {
+
+	return changeWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryIDString) EqualsIfPresent(value *string) changeWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return changeWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r changeQueryIDString) Order(direction SortOrder) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r changeQueryIDString) Cursor(cursor string) changeCursorParam {
+	return changeCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r changeQueryIDString) In(value []string) changeParamUnique {
+	return changeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryIDString) InIfPresent(value []string) changeParamUnique {
+	if value == nil {
+		return changeParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r changeQueryIDString) NotIn(value []string) changeParamUnique {
+	return changeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryIDString) NotInIfPresent(value []string) changeParamUnique {
+	if value == nil {
+		return changeParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r changeQueryIDString) Lt(value string) changeParamUnique {
+	return changeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryIDString) LtIfPresent(value *string) changeParamUnique {
+	if value == nil {
+		return changeParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r changeQueryIDString) Lte(value string) changeParamUnique {
+	return changeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryIDString) LteIfPresent(value *string) changeParamUnique {
+	if value == nil {
+		return changeParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r changeQueryIDString) Gt(value string) changeParamUnique {
+	return changeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryIDString) GtIfPresent(value *string) changeParamUnique {
+	if value == nil {
+		return changeParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r changeQueryIDString) Gte(value string) changeParamUnique {
+	return changeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryIDString) GteIfPresent(value *string) changeParamUnique {
+	if value == nil {
+		return changeParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r changeQueryIDString) Contains(value string) changeParamUnique {
+	return changeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryIDString) ContainsIfPresent(value *string) changeParamUnique {
+	if value == nil {
+		return changeParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r changeQueryIDString) StartsWith(value string) changeParamUnique {
+	return changeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryIDString) StartsWithIfPresent(value *string) changeParamUnique {
+	if value == nil {
+		return changeParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r changeQueryIDString) EndsWith(value string) changeParamUnique {
+	return changeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryIDString) EndsWithIfPresent(value *string) changeParamUnique {
+	if value == nil {
+		return changeParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r changeQueryIDString) Mode(value QueryMode) changeParamUnique {
+	return changeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryIDString) ModeIfPresent(value *QueryMode) changeParamUnique {
+	if value == nil {
+		return changeParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r changeQueryIDString) Not(value string) changeParamUnique {
+	return changeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryIDString) NotIfPresent(value *string) changeParamUnique {
+	if value == nil {
+		return changeParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r changeQueryIDString) HasPrefix(value string) changeParamUnique {
+	return changeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r changeQueryIDString) HasPrefixIfPresent(value *string) changeParamUnique {
+	if value == nil {
+		return changeParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r changeQueryIDString) HasSuffix(value string) changeParamUnique {
+	return changeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r changeQueryIDString) HasSuffixIfPresent(value *string) changeParamUnique {
+	if value == nil {
+		return changeParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r changeQueryIDString) Field() changePrismaFields {
+	return changeFieldID
+}
+
+// base struct
+type changeQueryOrganizationOrganization struct{}
+
+type changeQueryOrganizationRelations struct{}
+
+// Change -> Organization
+//
+// @relation
+// @required
+func (changeQueryOrganizationRelations) Where(
+	params ...OrganizationWhereParam,
+) changeDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (changeQueryOrganizationRelations) Fetch() changeToOrganizationFindUnique {
+	var v changeToOrganizationFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "organization"
+	v.query.Outputs = organizationOutput
+
+	return v
+}
+
+func (r changeQueryOrganizationRelations) Link(
+	params OrganizationWhereParam,
+) changeWithPrismaOrganizationSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return changeWithPrismaOrganizationSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return changeWithPrismaOrganizationSetParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryOrganizationRelations) Unlink() changeWithPrismaOrganizationSetParam {
+	var v changeWithPrismaOrganizationSetParam
+
+	v = changeWithPrismaOrganizationSetParam{
+		data: builder.Field{
+			Name: "organization",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r changeQueryOrganizationOrganization) Field() changePrismaFields {
+	return changeFieldOrganization
+}
+
+// base struct
+type changeQueryOrganizationIDString struct{}
+
+// Set the required value of OrganizationID
+func (r changeQueryOrganizationIDString) Set(value string) changeSetParam {
+
+	return changeSetParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of OrganizationID dynamically
+func (r changeQueryOrganizationIDString) SetIfPresent(value *String) changeSetParam {
+	if value == nil {
+		return changeSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r changeQueryOrganizationIDString) Equals(value string) changeWithPrismaOrganizationIDEqualsParam {
+
+	return changeWithPrismaOrganizationIDEqualsParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryOrganizationIDString) EqualsIfPresent(value *string) changeWithPrismaOrganizationIDEqualsParam {
+	if value == nil {
+		return changeWithPrismaOrganizationIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r changeQueryOrganizationIDString) Order(direction SortOrder) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: direction,
+		},
+	}
+}
+
+func (r changeQueryOrganizationIDString) Cursor(cursor string) changeCursorParam {
+	return changeCursorParam{
+		data: builder.Field{
+			Name:  "organization_id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r changeQueryOrganizationIDString) In(value []string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryOrganizationIDString) InIfPresent(value []string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r changeQueryOrganizationIDString) NotIn(value []string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryOrganizationIDString) NotInIfPresent(value []string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r changeQueryOrganizationIDString) Lt(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryOrganizationIDString) LtIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r changeQueryOrganizationIDString) Lte(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryOrganizationIDString) LteIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r changeQueryOrganizationIDString) Gt(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryOrganizationIDString) GtIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r changeQueryOrganizationIDString) Gte(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryOrganizationIDString) GteIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r changeQueryOrganizationIDString) Contains(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryOrganizationIDString) ContainsIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r changeQueryOrganizationIDString) StartsWith(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryOrganizationIDString) StartsWithIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r changeQueryOrganizationIDString) EndsWith(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryOrganizationIDString) EndsWithIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r changeQueryOrganizationIDString) Mode(value QueryMode) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryOrganizationIDString) ModeIfPresent(value *QueryMode) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r changeQueryOrganizationIDString) Not(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryOrganizationIDString) NotIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r changeQueryOrganizationIDString) HasPrefix(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r changeQueryOrganizationIDString) HasPrefixIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r changeQueryOrganizationIDString) HasSuffix(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "organization_id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r changeQueryOrganizationIDString) HasSuffixIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r changeQueryOrganizationIDString) Field() changePrismaFields {
+	return changeFieldOrganizationID
+}
+
+// base struct
+type changeQueryCreatedDateTime struct{}
+
+// Set the required value of Created
+func (r changeQueryCreatedDateTime) Set(value DateTime) changeSetParam {
+
+	return changeSetParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Created dynamically
+func (r changeQueryCreatedDateTime) SetIfPresent(value *DateTime) changeSetParam {
+	if value == nil {
+		return changeSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r changeQueryCreatedDateTime) Equals(value DateTime) changeWithPrismaCreatedEqualsParam {
+
+	return changeWithPrismaCreatedEqualsParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryCreatedDateTime) EqualsIfPresent(value *DateTime) changeWithPrismaCreatedEqualsParam {
+	if value == nil {
+		return changeWithPrismaCreatedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r changeQueryCreatedDateTime) Order(direction SortOrder) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: direction,
+		},
+	}
+}
+
+func (r changeQueryCreatedDateTime) Cursor(cursor DateTime) changeCursorParam {
+	return changeCursorParam{
+		data: builder.Field{
+			Name:  "created",
+			Value: cursor,
+		},
+	}
+}
+
+func (r changeQueryCreatedDateTime) In(value []DateTime) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryCreatedDateTime) InIfPresent(value []DateTime) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r changeQueryCreatedDateTime) NotIn(value []DateTime) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryCreatedDateTime) NotInIfPresent(value []DateTime) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r changeQueryCreatedDateTime) Lt(value DateTime) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryCreatedDateTime) LtIfPresent(value *DateTime) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r changeQueryCreatedDateTime) Lte(value DateTime) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryCreatedDateTime) LteIfPresent(value *DateTime) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r changeQueryCreatedDateTime) Gt(value DateTime) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryCreatedDateTime) GtIfPresent(value *DateTime) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r changeQueryCreatedDateTime) Gte(value DateTime) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryCreatedDateTime) GteIfPresent(value *DateTime) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r changeQueryCreatedDateTime) Not(value DateTime) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryCreatedDateTime) NotIfPresent(value *DateTime) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r changeQueryCreatedDateTime) Before(value DateTime) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r changeQueryCreatedDateTime) BeforeIfPresent(value *DateTime) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r changeQueryCreatedDateTime) After(value DateTime) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r changeQueryCreatedDateTime) AfterIfPresent(value *DateTime) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r changeQueryCreatedDateTime) BeforeEquals(value DateTime) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r changeQueryCreatedDateTime) BeforeEqualsIfPresent(value *DateTime) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r changeQueryCreatedDateTime) AfterEquals(value DateTime) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "created",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r changeQueryCreatedDateTime) AfterEqualsIfPresent(value *DateTime) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r changeQueryCreatedDateTime) Field() changePrismaFields {
+	return changeFieldCreated
+}
+
+// base struct
+type changeQueryComponentComponent struct{}
+
+type changeQueryComponentRelations struct{}
+
+// Change -> Component
+//
+// @relation
+// @required
+func (changeQueryComponentRelations) Where(
+	params ...ComponentWhereParam,
+) changeDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "component",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (changeQueryComponentRelations) Fetch() changeToComponentFindUnique {
+	var v changeToComponentFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "component"
+	v.query.Outputs = componentOutput
+
+	return v
+}
+
+func (r changeQueryComponentRelations) Link(
+	params ComponentWhereParam,
+) changeWithPrismaComponentSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return changeWithPrismaComponentSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return changeWithPrismaComponentSetParam{
+		data: builder.Field{
+			Name: "component",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryComponentRelations) Unlink() changeWithPrismaComponentSetParam {
+	var v changeWithPrismaComponentSetParam
+
+	v = changeWithPrismaComponentSetParam{
+		data: builder.Field{
+			Name: "component",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r changeQueryComponentComponent) Field() changePrismaFields {
+	return changeFieldComponent
+}
+
+// base struct
+type changeQueryComponentIDString struct{}
+
+// Set the required value of ComponentID
+func (r changeQueryComponentIDString) Set(value string) changeSetParam {
+
+	return changeSetParam{
+		data: builder.Field{
+			Name:  "component_id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ComponentID dynamically
+func (r changeQueryComponentIDString) SetIfPresent(value *String) changeSetParam {
+	if value == nil {
+		return changeSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r changeQueryComponentIDString) Equals(value string) changeWithPrismaComponentIDEqualsParam {
+
+	return changeWithPrismaComponentIDEqualsParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryComponentIDString) EqualsIfPresent(value *string) changeWithPrismaComponentIDEqualsParam {
+	if value == nil {
+		return changeWithPrismaComponentIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r changeQueryComponentIDString) Order(direction SortOrder) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name:  "component_id",
+			Value: direction,
+		},
+	}
+}
+
+func (r changeQueryComponentIDString) Cursor(cursor string) changeCursorParam {
+	return changeCursorParam{
+		data: builder.Field{
+			Name:  "component_id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r changeQueryComponentIDString) In(value []string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryComponentIDString) InIfPresent(value []string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r changeQueryComponentIDString) NotIn(value []string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryComponentIDString) NotInIfPresent(value []string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r changeQueryComponentIDString) Lt(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryComponentIDString) LtIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r changeQueryComponentIDString) Lte(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryComponentIDString) LteIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r changeQueryComponentIDString) Gt(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryComponentIDString) GtIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r changeQueryComponentIDString) Gte(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryComponentIDString) GteIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r changeQueryComponentIDString) Contains(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryComponentIDString) ContainsIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r changeQueryComponentIDString) StartsWith(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryComponentIDString) StartsWithIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r changeQueryComponentIDString) EndsWith(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryComponentIDString) EndsWithIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r changeQueryComponentIDString) Mode(value QueryMode) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryComponentIDString) ModeIfPresent(value *QueryMode) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r changeQueryComponentIDString) Not(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryComponentIDString) NotIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r changeQueryComponentIDString) HasPrefix(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r changeQueryComponentIDString) HasPrefixIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r changeQueryComponentIDString) HasSuffix(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "component_id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r changeQueryComponentIDString) HasSuffixIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r changeQueryComponentIDString) Field() changePrismaFields {
+	return changeFieldComponentID
+}
+
+// base struct
+type changeQueryTypeString struct{}
+
+// Set the required value of Type
+func (r changeQueryTypeString) Set(value string) changeWithPrismaTypeSetParam {
+
+	return changeWithPrismaTypeSetParam{
+		data: builder.Field{
+			Name:  "type",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Type dynamically
+func (r changeQueryTypeString) SetIfPresent(value *String) changeWithPrismaTypeSetParam {
+	if value == nil {
+		return changeWithPrismaTypeSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r changeQueryTypeString) Equals(value string) changeWithPrismaTypeEqualsParam {
+
+	return changeWithPrismaTypeEqualsParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryTypeString) EqualsIfPresent(value *string) changeWithPrismaTypeEqualsParam {
+	if value == nil {
+		return changeWithPrismaTypeEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r changeQueryTypeString) Order(direction SortOrder) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name:  "type",
+			Value: direction,
+		},
+	}
+}
+
+func (r changeQueryTypeString) Cursor(cursor string) changeCursorParam {
+	return changeCursorParam{
+		data: builder.Field{
+			Name:  "type",
+			Value: cursor,
+		},
+	}
+}
+
+func (r changeQueryTypeString) In(value []string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryTypeString) InIfPresent(value []string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r changeQueryTypeString) NotIn(value []string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryTypeString) NotInIfPresent(value []string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r changeQueryTypeString) Lt(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryTypeString) LtIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r changeQueryTypeString) Lte(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryTypeString) LteIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r changeQueryTypeString) Gt(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryTypeString) GtIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r changeQueryTypeString) Gte(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryTypeString) GteIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r changeQueryTypeString) Contains(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryTypeString) ContainsIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r changeQueryTypeString) StartsWith(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryTypeString) StartsWithIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r changeQueryTypeString) EndsWith(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryTypeString) EndsWithIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r changeQueryTypeString) Mode(value QueryMode) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryTypeString) ModeIfPresent(value *QueryMode) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r changeQueryTypeString) Not(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryTypeString) NotIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r changeQueryTypeString) HasPrefix(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r changeQueryTypeString) HasPrefixIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r changeQueryTypeString) HasSuffix(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "type",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r changeQueryTypeString) HasSuffixIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r changeQueryTypeString) Field() changePrismaFields {
+	return changeFieldType
+}
+
+// base struct
+type changeQueryContentJson struct{}
+
+// Set the required value of Content
+func (r changeQueryContentJson) Set(value JSON) changeWithPrismaContentSetParam {
+
+	return changeWithPrismaContentSetParam{
+		data: builder.Field{
+			Name:  "content",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Content dynamically
+func (r changeQueryContentJson) SetIfPresent(value *JSON) changeWithPrismaContentSetParam {
+	if value == nil {
+		return changeWithPrismaContentSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r changeQueryContentJson) Equals(value JSON) changeWithPrismaContentEqualsParam {
+
+	return changeWithPrismaContentEqualsParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryContentJson) EqualsIfPresent(value *JSON) changeWithPrismaContentEqualsParam {
+	if value == nil {
+		return changeWithPrismaContentEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r changeQueryContentJson) Order(direction SortOrder) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name:  "content",
+			Value: direction,
+		},
+	}
+}
+
+func (r changeQueryContentJson) Cursor(cursor JSON) changeCursorParam {
+	return changeCursorParam{
+		data: builder.Field{
+			Name:  "content",
+			Value: cursor,
+		},
+	}
+}
+
+func (r changeQueryContentJson) Path(value []string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "path",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryContentJson) PathIfPresent(value []string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Path(value)
+}
+
+func (r changeQueryContentJson) StringContains(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "string_contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryContentJson) StringContainsIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.StringContains(*value)
+}
+
+func (r changeQueryContentJson) StringStartsWith(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "string_starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryContentJson) StringStartsWithIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.StringStartsWith(*value)
+}
+
+func (r changeQueryContentJson) StringEndsWith(value string) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "string_ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryContentJson) StringEndsWithIfPresent(value *string) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.StringEndsWith(*value)
+}
+
+func (r changeQueryContentJson) ArrayContains(value JSON) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "array_contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryContentJson) ArrayContainsIfPresent(value *JSON) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.ArrayContains(*value)
+}
+
+func (r changeQueryContentJson) ArrayStartsWith(value JSON) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "array_starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryContentJson) ArrayStartsWithIfPresent(value *JSON) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.ArrayStartsWith(*value)
+}
+
+func (r changeQueryContentJson) ArrayEndsWith(value JSON) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "array_ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryContentJson) ArrayEndsWithIfPresent(value *JSON) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.ArrayEndsWith(*value)
+}
+
+func (r changeQueryContentJson) Lt(value JSON) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryContentJson) LtIfPresent(value *JSON) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r changeQueryContentJson) Lte(value JSON) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryContentJson) LteIfPresent(value *JSON) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r changeQueryContentJson) Gt(value JSON) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryContentJson) GtIfPresent(value *JSON) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r changeQueryContentJson) Gte(value JSON) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryContentJson) GteIfPresent(value *JSON) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r changeQueryContentJson) Not(value JSONNullValueFilter) changeDefaultParam {
+	return changeDefaultParam{
+		data: builder.Field{
+			Name: "content",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r changeQueryContentJson) NotIfPresent(value *JSONNullValueFilter) changeDefaultParam {
+	if value == nil {
+		return changeDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r changeQueryContentJson) Field() changePrismaFields {
+	return changeFieldContent
+}
+
 // --- template actions.gotpl ---
 var countOutput = []builder.Output{
 	{Name: "count"},
@@ -33134,6 +37082,7 @@ var organizationOutput = []builder.Output{
 	{Name: "created"},
 	{Name: "updated"},
 	{Name: "name"},
+	{Name: "description"},
 }
 
 type OrganizationRelationWith interface {
@@ -33612,6 +37561,84 @@ func (p organizationWithPrismaNameEqualsUniqueParam) nameField()         {}
 func (organizationWithPrismaNameEqualsUniqueParam) unique() {}
 func (organizationWithPrismaNameEqualsUniqueParam) equals() {}
 
+type OrganizationWithPrismaDescriptionEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	organizationModel()
+	descriptionField()
+}
+
+type OrganizationWithPrismaDescriptionSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	organizationModel()
+	descriptionField()
+}
+
+type organizationWithPrismaDescriptionSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaDescriptionSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaDescriptionSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaDescriptionSetParam) organizationModel() {}
+
+func (p organizationWithPrismaDescriptionSetParam) descriptionField() {}
+
+type OrganizationWithPrismaDescriptionWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	organizationModel()
+	descriptionField()
+}
+
+type organizationWithPrismaDescriptionEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaDescriptionEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaDescriptionEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaDescriptionEqualsParam) organizationModel() {}
+
+func (p organizationWithPrismaDescriptionEqualsParam) descriptionField() {}
+
+func (organizationWithPrismaDescriptionSetParam) settable()  {}
+func (organizationWithPrismaDescriptionEqualsParam) equals() {}
+
+type organizationWithPrismaDescriptionEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaDescriptionEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaDescriptionEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaDescriptionEqualsUniqueParam) organizationModel() {}
+func (p organizationWithPrismaDescriptionEqualsUniqueParam) descriptionField()  {}
+
+func (organizationWithPrismaDescriptionEqualsUniqueParam) unique() {}
+func (organizationWithPrismaDescriptionEqualsUniqueParam) equals() {}
+
 type OrganizationWithPrismaUsersEqualsSetParam interface {
 	field() builder.Field
 	getQuery() builder.Query
@@ -33924,83 +37951,83 @@ func (p organizationWithPrismaDocumentsEqualsUniqueParam) documentsField()    {}
 func (organizationWithPrismaDocumentsEqualsUniqueParam) unique() {}
 func (organizationWithPrismaDocumentsEqualsUniqueParam) equals() {}
 
-type OrganizationWithPrismaBlockEqualsSetParam interface {
+type OrganizationWithPrismaBlocksEqualsSetParam interface {
 	field() builder.Field
 	getQuery() builder.Query
 	equals()
 	organizationModel()
-	blockField()
+	blocksField()
 }
 
-type OrganizationWithPrismaBlockSetParam interface {
+type OrganizationWithPrismaBlocksSetParam interface {
 	field() builder.Field
 	getQuery() builder.Query
 	organizationModel()
-	blockField()
+	blocksField()
 }
 
-type organizationWithPrismaBlockSetParam struct {
+type organizationWithPrismaBlocksSetParam struct {
 	data  builder.Field
 	query builder.Query
 }
 
-func (p organizationWithPrismaBlockSetParam) field() builder.Field {
+func (p organizationWithPrismaBlocksSetParam) field() builder.Field {
 	return p.data
 }
 
-func (p organizationWithPrismaBlockSetParam) getQuery() builder.Query {
+func (p organizationWithPrismaBlocksSetParam) getQuery() builder.Query {
 	return p.query
 }
 
-func (p organizationWithPrismaBlockSetParam) organizationModel() {}
+func (p organizationWithPrismaBlocksSetParam) organizationModel() {}
 
-func (p organizationWithPrismaBlockSetParam) blockField() {}
+func (p organizationWithPrismaBlocksSetParam) blocksField() {}
 
-type OrganizationWithPrismaBlockWhereParam interface {
+type OrganizationWithPrismaBlocksWhereParam interface {
 	field() builder.Field
 	getQuery() builder.Query
 	organizationModel()
-	blockField()
+	blocksField()
 }
 
-type organizationWithPrismaBlockEqualsParam struct {
+type organizationWithPrismaBlocksEqualsParam struct {
 	data  builder.Field
 	query builder.Query
 }
 
-func (p organizationWithPrismaBlockEqualsParam) field() builder.Field {
+func (p organizationWithPrismaBlocksEqualsParam) field() builder.Field {
 	return p.data
 }
 
-func (p organizationWithPrismaBlockEqualsParam) getQuery() builder.Query {
+func (p organizationWithPrismaBlocksEqualsParam) getQuery() builder.Query {
 	return p.query
 }
 
-func (p organizationWithPrismaBlockEqualsParam) organizationModel() {}
+func (p organizationWithPrismaBlocksEqualsParam) organizationModel() {}
 
-func (p organizationWithPrismaBlockEqualsParam) blockField() {}
+func (p organizationWithPrismaBlocksEqualsParam) blocksField() {}
 
-func (organizationWithPrismaBlockSetParam) settable()  {}
-func (organizationWithPrismaBlockEqualsParam) equals() {}
+func (organizationWithPrismaBlocksSetParam) settable()  {}
+func (organizationWithPrismaBlocksEqualsParam) equals() {}
 
-type organizationWithPrismaBlockEqualsUniqueParam struct {
+type organizationWithPrismaBlocksEqualsUniqueParam struct {
 	data  builder.Field
 	query builder.Query
 }
 
-func (p organizationWithPrismaBlockEqualsUniqueParam) field() builder.Field {
+func (p organizationWithPrismaBlocksEqualsUniqueParam) field() builder.Field {
 	return p.data
 }
 
-func (p organizationWithPrismaBlockEqualsUniqueParam) getQuery() builder.Query {
+func (p organizationWithPrismaBlocksEqualsUniqueParam) getQuery() builder.Query {
 	return p.query
 }
 
-func (p organizationWithPrismaBlockEqualsUniqueParam) organizationModel() {}
-func (p organizationWithPrismaBlockEqualsUniqueParam) blockField()        {}
+func (p organizationWithPrismaBlocksEqualsUniqueParam) organizationModel() {}
+func (p organizationWithPrismaBlocksEqualsUniqueParam) blocksField()       {}
 
-func (organizationWithPrismaBlockEqualsUniqueParam) unique() {}
-func (organizationWithPrismaBlockEqualsUniqueParam) equals() {}
+func (organizationWithPrismaBlocksEqualsUniqueParam) unique() {}
+func (organizationWithPrismaBlocksEqualsUniqueParam) equals() {}
 
 type OrganizationWithPrismaSessionsEqualsSetParam interface {
 	field() builder.Field
@@ -34079,6 +38106,84 @@ func (p organizationWithPrismaSessionsEqualsUniqueParam) sessionsField()     {}
 
 func (organizationWithPrismaSessionsEqualsUniqueParam) unique() {}
 func (organizationWithPrismaSessionsEqualsUniqueParam) equals() {}
+
+type OrganizationWithPrismaChangesEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	organizationModel()
+	changesField()
+}
+
+type OrganizationWithPrismaChangesSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	organizationModel()
+	changesField()
+}
+
+type organizationWithPrismaChangesSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaChangesSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaChangesSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaChangesSetParam) organizationModel() {}
+
+func (p organizationWithPrismaChangesSetParam) changesField() {}
+
+type OrganizationWithPrismaChangesWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	organizationModel()
+	changesField()
+}
+
+type organizationWithPrismaChangesEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaChangesEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaChangesEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaChangesEqualsParam) organizationModel() {}
+
+func (p organizationWithPrismaChangesEqualsParam) changesField() {}
+
+func (organizationWithPrismaChangesSetParam) settable()  {}
+func (organizationWithPrismaChangesEqualsParam) equals() {}
+
+type organizationWithPrismaChangesEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p organizationWithPrismaChangesEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p organizationWithPrismaChangesEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p organizationWithPrismaChangesEqualsUniqueParam) organizationModel() {}
+func (p organizationWithPrismaChangesEqualsUniqueParam) changesField()      {}
+
+func (organizationWithPrismaChangesEqualsUniqueParam) unique() {}
+func (organizationWithPrismaChangesEqualsUniqueParam) equals() {}
 
 type userActions struct {
 	// client holds the prisma client
@@ -39232,7 +43337,9 @@ var componentOutput = []builder.Output{
 	{Name: "organization_id"},
 	{Name: "created"},
 	{Name: "updated"},
+	{Name: "status"},
 	{Name: "name"},
+	{Name: "description"},
 	{Name: "type"},
 	{Name: "provider"},
 }
@@ -39791,6 +43898,84 @@ func (p componentWithPrismaUpdatedEqualsUniqueParam) updatedField()   {}
 func (componentWithPrismaUpdatedEqualsUniqueParam) unique() {}
 func (componentWithPrismaUpdatedEqualsUniqueParam) equals() {}
 
+type ComponentWithPrismaStatusEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentModel()
+	statusField()
+}
+
+type ComponentWithPrismaStatusSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	statusField()
+}
+
+type componentWithPrismaStatusSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaStatusSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaStatusSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaStatusSetParam) componentModel() {}
+
+func (p componentWithPrismaStatusSetParam) statusField() {}
+
+type ComponentWithPrismaStatusWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	statusField()
+}
+
+type componentWithPrismaStatusEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaStatusEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaStatusEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaStatusEqualsParam) componentModel() {}
+
+func (p componentWithPrismaStatusEqualsParam) statusField() {}
+
+func (componentWithPrismaStatusSetParam) settable()  {}
+func (componentWithPrismaStatusEqualsParam) equals() {}
+
+type componentWithPrismaStatusEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaStatusEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaStatusEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaStatusEqualsUniqueParam) componentModel() {}
+func (p componentWithPrismaStatusEqualsUniqueParam) statusField()    {}
+
+func (componentWithPrismaStatusEqualsUniqueParam) unique() {}
+func (componentWithPrismaStatusEqualsUniqueParam) equals() {}
+
 type ComponentWithPrismaNameEqualsSetParam interface {
 	field() builder.Field
 	getQuery() builder.Query
@@ -39868,6 +44053,84 @@ func (p componentWithPrismaNameEqualsUniqueParam) nameField()      {}
 
 func (componentWithPrismaNameEqualsUniqueParam) unique() {}
 func (componentWithPrismaNameEqualsUniqueParam) equals() {}
+
+type ComponentWithPrismaDescriptionEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentModel()
+	descriptionField()
+}
+
+type ComponentWithPrismaDescriptionSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	descriptionField()
+}
+
+type componentWithPrismaDescriptionSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaDescriptionSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaDescriptionSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaDescriptionSetParam) componentModel() {}
+
+func (p componentWithPrismaDescriptionSetParam) descriptionField() {}
+
+type ComponentWithPrismaDescriptionWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	descriptionField()
+}
+
+type componentWithPrismaDescriptionEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaDescriptionEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaDescriptionEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaDescriptionEqualsParam) componentModel() {}
+
+func (p componentWithPrismaDescriptionEqualsParam) descriptionField() {}
+
+func (componentWithPrismaDescriptionSetParam) settable()  {}
+func (componentWithPrismaDescriptionEqualsParam) equals() {}
+
+type componentWithPrismaDescriptionEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaDescriptionEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaDescriptionEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaDescriptionEqualsUniqueParam) componentModel()   {}
+func (p componentWithPrismaDescriptionEqualsUniqueParam) descriptionField() {}
+
+func (componentWithPrismaDescriptionEqualsUniqueParam) unique() {}
+func (componentWithPrismaDescriptionEqualsUniqueParam) equals() {}
 
 type ComponentWithPrismaTypeEqualsSetParam interface {
 	field() builder.Field
@@ -40102,6 +44365,84 @@ func (p componentWithPrismaTagsEqualsUniqueParam) tagsField()      {}
 
 func (componentWithPrismaTagsEqualsUniqueParam) unique() {}
 func (componentWithPrismaTagsEqualsUniqueParam) equals() {}
+
+type ComponentWithPrismaChangesEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	componentModel()
+	changesField()
+}
+
+type ComponentWithPrismaChangesSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	changesField()
+}
+
+type componentWithPrismaChangesSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaChangesSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaChangesSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaChangesSetParam) componentModel() {}
+
+func (p componentWithPrismaChangesSetParam) changesField() {}
+
+type ComponentWithPrismaChangesWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	componentModel()
+	changesField()
+}
+
+type componentWithPrismaChangesEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaChangesEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaChangesEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaChangesEqualsParam) componentModel() {}
+
+func (p componentWithPrismaChangesEqualsParam) changesField() {}
+
+func (componentWithPrismaChangesSetParam) settable()  {}
+func (componentWithPrismaChangesEqualsParam) equals() {}
+
+type componentWithPrismaChangesEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p componentWithPrismaChangesEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p componentWithPrismaChangesEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p componentWithPrismaChangesEqualsUniqueParam) componentModel() {}
+func (p componentWithPrismaChangesEqualsUniqueParam) changesField()   {}
+
+func (componentWithPrismaChangesEqualsUniqueParam) unique() {}
+func (componentWithPrismaChangesEqualsUniqueParam) equals() {}
 
 type componentTagActions struct {
 	// client holds the prisma client
@@ -43955,6 +48296,808 @@ func (p blockWithPrismaDocumentsEqualsUniqueParam) documentsField() {}
 func (blockWithPrismaDocumentsEqualsUniqueParam) unique() {}
 func (blockWithPrismaDocumentsEqualsUniqueParam) equals() {}
 
+type changeActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var changeOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "organization_id"},
+	{Name: "created"},
+	{Name: "component_id"},
+	{Name: "type"},
+	{Name: "content"},
+}
+
+type ChangeRelationWith interface {
+	getQuery() builder.Query
+	with()
+	changeRelation()
+}
+
+type ChangeWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+}
+
+type changeDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeDefaultParam) changeModel() {}
+
+type ChangeOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+}
+
+type changeOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeOrderByParam) changeModel() {}
+
+type ChangeCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+	isCursor()
+}
+
+type changeCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeCursorParam) isCursor() {}
+
+func (p changeCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeCursorParam) changeModel() {}
+
+type ChangeParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	changeModel()
+}
+
+type changeParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeParamUnique) changeModel() {}
+
+func (changeParamUnique) unique() {}
+
+func (p changeParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p changeParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type ChangeEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	changeModel()
+}
+
+type changeEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeEqualsParam) changeModel() {}
+
+func (changeEqualsParam) equals() {}
+
+func (p changeEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type ChangeEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	changeModel()
+}
+
+type changeEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeEqualsUniqueParam) changeModel() {}
+
+func (changeEqualsUniqueParam) unique() {}
+func (changeEqualsUniqueParam) equals() {}
+
+func (p changeEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type ChangeSetParam interface {
+	field() builder.Field
+	settable()
+	changeModel()
+}
+
+type changeSetParam struct {
+	data builder.Field
+}
+
+func (changeSetParam) settable() {}
+
+func (p changeSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeSetParam) changeModel() {}
+
+type ChangeWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	changeModel()
+	idField()
+}
+
+type ChangeWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+	idField()
+}
+
+type changeWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaIDSetParam) changeModel() {}
+
+func (p changeWithPrismaIDSetParam) idField() {}
+
+type ChangeWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+	idField()
+}
+
+type changeWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaIDEqualsParam) changeModel() {}
+
+func (p changeWithPrismaIDEqualsParam) idField() {}
+
+func (changeWithPrismaIDSetParam) settable()  {}
+func (changeWithPrismaIDEqualsParam) equals() {}
+
+type changeWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaIDEqualsUniqueParam) changeModel() {}
+func (p changeWithPrismaIDEqualsUniqueParam) idField()     {}
+
+func (changeWithPrismaIDEqualsUniqueParam) unique() {}
+func (changeWithPrismaIDEqualsUniqueParam) equals() {}
+
+type ChangeWithPrismaOrganizationEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	changeModel()
+	organizationField()
+}
+
+type ChangeWithPrismaOrganizationSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+	organizationField()
+}
+
+type changeWithPrismaOrganizationSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaOrganizationSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaOrganizationSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaOrganizationSetParam) changeModel() {}
+
+func (p changeWithPrismaOrganizationSetParam) organizationField() {}
+
+type ChangeWithPrismaOrganizationWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+	organizationField()
+}
+
+type changeWithPrismaOrganizationEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaOrganizationEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaOrganizationEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaOrganizationEqualsParam) changeModel() {}
+
+func (p changeWithPrismaOrganizationEqualsParam) organizationField() {}
+
+func (changeWithPrismaOrganizationSetParam) settable()  {}
+func (changeWithPrismaOrganizationEqualsParam) equals() {}
+
+type changeWithPrismaOrganizationEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaOrganizationEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaOrganizationEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaOrganizationEqualsUniqueParam) changeModel()       {}
+func (p changeWithPrismaOrganizationEqualsUniqueParam) organizationField() {}
+
+func (changeWithPrismaOrganizationEqualsUniqueParam) unique() {}
+func (changeWithPrismaOrganizationEqualsUniqueParam) equals() {}
+
+type ChangeWithPrismaOrganizationIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	changeModel()
+	organizationIDField()
+}
+
+type ChangeWithPrismaOrganizationIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+	organizationIDField()
+}
+
+type changeWithPrismaOrganizationIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaOrganizationIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaOrganizationIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaOrganizationIDSetParam) changeModel() {}
+
+func (p changeWithPrismaOrganizationIDSetParam) organizationIDField() {}
+
+type ChangeWithPrismaOrganizationIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+	organizationIDField()
+}
+
+type changeWithPrismaOrganizationIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaOrganizationIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaOrganizationIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaOrganizationIDEqualsParam) changeModel() {}
+
+func (p changeWithPrismaOrganizationIDEqualsParam) organizationIDField() {}
+
+func (changeWithPrismaOrganizationIDSetParam) settable()  {}
+func (changeWithPrismaOrganizationIDEqualsParam) equals() {}
+
+type changeWithPrismaOrganizationIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaOrganizationIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaOrganizationIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaOrganizationIDEqualsUniqueParam) changeModel()         {}
+func (p changeWithPrismaOrganizationIDEqualsUniqueParam) organizationIDField() {}
+
+func (changeWithPrismaOrganizationIDEqualsUniqueParam) unique() {}
+func (changeWithPrismaOrganizationIDEqualsUniqueParam) equals() {}
+
+type ChangeWithPrismaCreatedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	changeModel()
+	createdField()
+}
+
+type ChangeWithPrismaCreatedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+	createdField()
+}
+
+type changeWithPrismaCreatedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaCreatedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaCreatedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaCreatedSetParam) changeModel() {}
+
+func (p changeWithPrismaCreatedSetParam) createdField() {}
+
+type ChangeWithPrismaCreatedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+	createdField()
+}
+
+type changeWithPrismaCreatedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaCreatedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaCreatedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaCreatedEqualsParam) changeModel() {}
+
+func (p changeWithPrismaCreatedEqualsParam) createdField() {}
+
+func (changeWithPrismaCreatedSetParam) settable()  {}
+func (changeWithPrismaCreatedEqualsParam) equals() {}
+
+type changeWithPrismaCreatedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaCreatedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaCreatedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaCreatedEqualsUniqueParam) changeModel()  {}
+func (p changeWithPrismaCreatedEqualsUniqueParam) createdField() {}
+
+func (changeWithPrismaCreatedEqualsUniqueParam) unique() {}
+func (changeWithPrismaCreatedEqualsUniqueParam) equals() {}
+
+type ChangeWithPrismaComponentEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	changeModel()
+	componentField()
+}
+
+type ChangeWithPrismaComponentSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+	componentField()
+}
+
+type changeWithPrismaComponentSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaComponentSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaComponentSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaComponentSetParam) changeModel() {}
+
+func (p changeWithPrismaComponentSetParam) componentField() {}
+
+type ChangeWithPrismaComponentWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+	componentField()
+}
+
+type changeWithPrismaComponentEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaComponentEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaComponentEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaComponentEqualsParam) changeModel() {}
+
+func (p changeWithPrismaComponentEqualsParam) componentField() {}
+
+func (changeWithPrismaComponentSetParam) settable()  {}
+func (changeWithPrismaComponentEqualsParam) equals() {}
+
+type changeWithPrismaComponentEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaComponentEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaComponentEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaComponentEqualsUniqueParam) changeModel()    {}
+func (p changeWithPrismaComponentEqualsUniqueParam) componentField() {}
+
+func (changeWithPrismaComponentEqualsUniqueParam) unique() {}
+func (changeWithPrismaComponentEqualsUniqueParam) equals() {}
+
+type ChangeWithPrismaComponentIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	changeModel()
+	componentIDField()
+}
+
+type ChangeWithPrismaComponentIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+	componentIDField()
+}
+
+type changeWithPrismaComponentIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaComponentIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaComponentIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaComponentIDSetParam) changeModel() {}
+
+func (p changeWithPrismaComponentIDSetParam) componentIDField() {}
+
+type ChangeWithPrismaComponentIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+	componentIDField()
+}
+
+type changeWithPrismaComponentIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaComponentIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaComponentIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaComponentIDEqualsParam) changeModel() {}
+
+func (p changeWithPrismaComponentIDEqualsParam) componentIDField() {}
+
+func (changeWithPrismaComponentIDSetParam) settable()  {}
+func (changeWithPrismaComponentIDEqualsParam) equals() {}
+
+type changeWithPrismaComponentIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaComponentIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaComponentIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaComponentIDEqualsUniqueParam) changeModel()      {}
+func (p changeWithPrismaComponentIDEqualsUniqueParam) componentIDField() {}
+
+func (changeWithPrismaComponentIDEqualsUniqueParam) unique() {}
+func (changeWithPrismaComponentIDEqualsUniqueParam) equals() {}
+
+type ChangeWithPrismaTypeEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	changeModel()
+	typeField()
+}
+
+type ChangeWithPrismaTypeSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+	typeField()
+}
+
+type changeWithPrismaTypeSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaTypeSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaTypeSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaTypeSetParam) changeModel() {}
+
+func (p changeWithPrismaTypeSetParam) typeField() {}
+
+type ChangeWithPrismaTypeWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+	typeField()
+}
+
+type changeWithPrismaTypeEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaTypeEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaTypeEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaTypeEqualsParam) changeModel() {}
+
+func (p changeWithPrismaTypeEqualsParam) typeField() {}
+
+func (changeWithPrismaTypeSetParam) settable()  {}
+func (changeWithPrismaTypeEqualsParam) equals() {}
+
+type changeWithPrismaTypeEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaTypeEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaTypeEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaTypeEqualsUniqueParam) changeModel() {}
+func (p changeWithPrismaTypeEqualsUniqueParam) typeField()   {}
+
+func (changeWithPrismaTypeEqualsUniqueParam) unique() {}
+func (changeWithPrismaTypeEqualsUniqueParam) equals() {}
+
+type ChangeWithPrismaContentEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	changeModel()
+	contentField()
+}
+
+type ChangeWithPrismaContentSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+	contentField()
+}
+
+type changeWithPrismaContentSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaContentSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaContentSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaContentSetParam) changeModel() {}
+
+func (p changeWithPrismaContentSetParam) contentField() {}
+
+type ChangeWithPrismaContentWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	changeModel()
+	contentField()
+}
+
+type changeWithPrismaContentEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaContentEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaContentEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaContentEqualsParam) changeModel() {}
+
+func (p changeWithPrismaContentEqualsParam) contentField() {}
+
+func (changeWithPrismaContentSetParam) settable()  {}
+func (changeWithPrismaContentEqualsParam) equals() {}
+
+type changeWithPrismaContentEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p changeWithPrismaContentEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p changeWithPrismaContentEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p changeWithPrismaContentEqualsUniqueParam) changeModel()  {}
+func (p changeWithPrismaContentEqualsUniqueParam) contentField() {}
+
+func (changeWithPrismaContentEqualsUniqueParam) unique() {}
+func (changeWithPrismaContentEqualsUniqueParam) equals() {}
+
 // --- template create.gotpl ---
 
 // Creates a single organization.
@@ -44948,6 +50091,80 @@ func (r blockCreateOne) Exec(ctx context.Context) (*BlockModel, error) {
 
 func (r blockCreateOne) Tx() BlockUniqueTxResult {
 	v := newBlockUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single change.
+func (r changeActions) CreateOne(
+	_organization ChangeWithPrismaOrganizationSetParam,
+	_component ChangeWithPrismaComponentSetParam,
+	_type ChangeWithPrismaTypeSetParam,
+	_content ChangeWithPrismaContentSetParam,
+
+	optional ...ChangeSetParam,
+) changeCreateOne {
+	var v changeCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "Change"
+	v.query.Outputs = changeOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _organization.field())
+	fields = append(fields, _component.field())
+	fields = append(fields, _type.field())
+	fields = append(fields, _content.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r changeCreateOne) With(params ...ChangeRelationWith) changeCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type changeCreateOne struct {
+	query builder.Query
+}
+
+func (p changeCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p changeCreateOne) changeModel() {}
+
+func (r changeCreateOne) Exec(ctx context.Context) (*ChangeModel, error) {
+	var v ChangeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r changeCreateOne) Tx() ChangeUniqueTxResult {
+	v := newChangeUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -47171,23 +52388,23 @@ func (r organizationToDocumentsDeleteMany) Tx() OrganizationManyTxResult {
 	return v
 }
 
-type organizationToBlockFindUnique struct {
+type organizationToBlocksFindUnique struct {
 	query builder.Query
 }
 
-func (r organizationToBlockFindUnique) getQuery() builder.Query {
+func (r organizationToBlocksFindUnique) getQuery() builder.Query {
 	return r.query
 }
 
-func (r organizationToBlockFindUnique) ExtractQuery() builder.Query {
+func (r organizationToBlocksFindUnique) ExtractQuery() builder.Query {
 	return r.query
 }
 
-func (r organizationToBlockFindUnique) with()                 {}
-func (r organizationToBlockFindUnique) organizationModel()    {}
-func (r organizationToBlockFindUnique) organizationRelation() {}
+func (r organizationToBlocksFindUnique) with()                 {}
+func (r organizationToBlocksFindUnique) organizationModel()    {}
+func (r organizationToBlocksFindUnique) organizationRelation() {}
 
-func (r organizationToBlockFindUnique) With(params ...BlockRelationWith) organizationToBlockFindUnique {
+func (r organizationToBlocksFindUnique) With(params ...BlockRelationWith) organizationToBlocksFindUnique {
 	for _, q := range params {
 		query := q.getQuery()
 		r.query.Outputs = append(r.query.Outputs, builder.Output{
@@ -47200,7 +52417,7 @@ func (r organizationToBlockFindUnique) With(params ...BlockRelationWith) organiz
 	return r
 }
 
-func (r organizationToBlockFindUnique) Select(params ...organizationPrismaFields) organizationToBlockFindUnique {
+func (r organizationToBlocksFindUnique) Select(params ...organizationPrismaFields) organizationToBlocksFindUnique {
 	var outputs []builder.Output
 
 	for _, param := range params {
@@ -47214,7 +52431,7 @@ func (r organizationToBlockFindUnique) Select(params ...organizationPrismaFields
 	return r
 }
 
-func (r organizationToBlockFindUnique) Omit(params ...organizationPrismaFields) organizationToBlockFindUnique {
+func (r organizationToBlocksFindUnique) Omit(params ...organizationPrismaFields) organizationToBlocksFindUnique {
 	var outputs []builder.Output
 
 	var raw []string
@@ -47233,7 +52450,7 @@ func (r organizationToBlockFindUnique) Omit(params ...organizationPrismaFields) 
 	return r
 }
 
-func (r organizationToBlockFindUnique) Exec(ctx context.Context) (
+func (r organizationToBlocksFindUnique) Exec(ctx context.Context) (
 	*OrganizationModel,
 	error,
 ) {
@@ -47249,7 +52466,7 @@ func (r organizationToBlockFindUnique) Exec(ctx context.Context) (
 	return v, nil
 }
 
-func (r organizationToBlockFindUnique) ExecInner(ctx context.Context) (
+func (r organizationToBlocksFindUnique) ExecInner(ctx context.Context) (
 	*InnerOrganization,
 	error,
 ) {
@@ -47265,12 +52482,12 @@ func (r organizationToBlockFindUnique) ExecInner(ctx context.Context) (
 	return v, nil
 }
 
-func (r organizationToBlockFindUnique) Update(params ...OrganizationSetParam) organizationToBlockUpdateUnique {
+func (r organizationToBlocksFindUnique) Update(params ...OrganizationSetParam) organizationToBlocksUpdateUnique {
 	r.query.Operation = "mutation"
 	r.query.Method = "updateOne"
 	r.query.Model = "Organization"
 
-	var v organizationToBlockUpdateUnique
+	var v organizationToBlocksUpdateUnique
 	v.query = r.query
 	var fields []builder.Field
 	for _, q := range params {
@@ -47299,17 +52516,17 @@ func (r organizationToBlockFindUnique) Update(params ...OrganizationSetParam) or
 	return v
 }
 
-type organizationToBlockUpdateUnique struct {
+type organizationToBlocksUpdateUnique struct {
 	query builder.Query
 }
 
-func (r organizationToBlockUpdateUnique) ExtractQuery() builder.Query {
+func (r organizationToBlocksUpdateUnique) ExtractQuery() builder.Query {
 	return r.query
 }
 
-func (r organizationToBlockUpdateUnique) organizationModel() {}
+func (r organizationToBlocksUpdateUnique) organizationModel() {}
 
-func (r organizationToBlockUpdateUnique) Exec(ctx context.Context) (*OrganizationModel, error) {
+func (r organizationToBlocksUpdateUnique) Exec(ctx context.Context) (*OrganizationModel, error) {
 	var v OrganizationModel
 	if err := r.query.Exec(ctx, &v); err != nil {
 		return nil, err
@@ -47317,15 +52534,15 @@ func (r organizationToBlockUpdateUnique) Exec(ctx context.Context) (*Organizatio
 	return &v, nil
 }
 
-func (r organizationToBlockUpdateUnique) Tx() OrganizationUniqueTxResult {
+func (r organizationToBlocksUpdateUnique) Tx() OrganizationUniqueTxResult {
 	v := newOrganizationUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
 }
 
-func (r organizationToBlockFindUnique) Delete() organizationToBlockDeleteUnique {
-	var v organizationToBlockDeleteUnique
+func (r organizationToBlocksFindUnique) Delete() organizationToBlocksDeleteUnique {
+	var v organizationToBlocksDeleteUnique
 	v.query = r.query
 	v.query.Operation = "mutation"
 	v.query.Method = "deleteOne"
@@ -47334,17 +52551,17 @@ func (r organizationToBlockFindUnique) Delete() organizationToBlockDeleteUnique 
 	return v
 }
 
-type organizationToBlockDeleteUnique struct {
+type organizationToBlocksDeleteUnique struct {
 	query builder.Query
 }
 
-func (r organizationToBlockDeleteUnique) ExtractQuery() builder.Query {
+func (r organizationToBlocksDeleteUnique) ExtractQuery() builder.Query {
 	return r.query
 }
 
-func (p organizationToBlockDeleteUnique) organizationModel() {}
+func (p organizationToBlocksDeleteUnique) organizationModel() {}
 
-func (r organizationToBlockDeleteUnique) Exec(ctx context.Context) (*OrganizationModel, error) {
+func (r organizationToBlocksDeleteUnique) Exec(ctx context.Context) (*OrganizationModel, error) {
 	var v OrganizationModel
 	if err := r.query.Exec(ctx, &v); err != nil {
 		return nil, err
@@ -47352,30 +52569,30 @@ func (r organizationToBlockDeleteUnique) Exec(ctx context.Context) (*Organizatio
 	return &v, nil
 }
 
-func (r organizationToBlockDeleteUnique) Tx() OrganizationUniqueTxResult {
+func (r organizationToBlocksDeleteUnique) Tx() OrganizationUniqueTxResult {
 	v := newOrganizationUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
 }
 
-type organizationToBlockFindFirst struct {
+type organizationToBlocksFindFirst struct {
 	query builder.Query
 }
 
-func (r organizationToBlockFindFirst) getQuery() builder.Query {
+func (r organizationToBlocksFindFirst) getQuery() builder.Query {
 	return r.query
 }
 
-func (r organizationToBlockFindFirst) ExtractQuery() builder.Query {
+func (r organizationToBlocksFindFirst) ExtractQuery() builder.Query {
 	return r.query
 }
 
-func (r organizationToBlockFindFirst) with()                 {}
-func (r organizationToBlockFindFirst) organizationModel()    {}
-func (r organizationToBlockFindFirst) organizationRelation() {}
+func (r organizationToBlocksFindFirst) with()                 {}
+func (r organizationToBlocksFindFirst) organizationModel()    {}
+func (r organizationToBlocksFindFirst) organizationRelation() {}
 
-func (r organizationToBlockFindFirst) With(params ...BlockRelationWith) organizationToBlockFindFirst {
+func (r organizationToBlocksFindFirst) With(params ...BlockRelationWith) organizationToBlocksFindFirst {
 	for _, q := range params {
 		query := q.getQuery()
 		r.query.Outputs = append(r.query.Outputs, builder.Output{
@@ -47388,7 +52605,7 @@ func (r organizationToBlockFindFirst) With(params ...BlockRelationWith) organiza
 	return r
 }
 
-func (r organizationToBlockFindFirst) Select(params ...organizationPrismaFields) organizationToBlockFindFirst {
+func (r organizationToBlocksFindFirst) Select(params ...organizationPrismaFields) organizationToBlocksFindFirst {
 	var outputs []builder.Output
 
 	for _, param := range params {
@@ -47402,7 +52619,7 @@ func (r organizationToBlockFindFirst) Select(params ...organizationPrismaFields)
 	return r
 }
 
-func (r organizationToBlockFindFirst) Omit(params ...organizationPrismaFields) organizationToBlockFindFirst {
+func (r organizationToBlocksFindFirst) Omit(params ...organizationPrismaFields) organizationToBlocksFindFirst {
 	var outputs []builder.Output
 
 	var raw []string
@@ -47421,7 +52638,7 @@ func (r organizationToBlockFindFirst) Omit(params ...organizationPrismaFields) o
 	return r
 }
 
-func (r organizationToBlockFindFirst) OrderBy(params ...BlockOrderByParam) organizationToBlockFindFirst {
+func (r organizationToBlocksFindFirst) OrderBy(params ...BlockOrderByParam) organizationToBlocksFindFirst {
 	var fields []builder.Field
 
 	for _, param := range params {
@@ -47441,7 +52658,7 @@ func (r organizationToBlockFindFirst) OrderBy(params ...BlockOrderByParam) organ
 	return r
 }
 
-func (r organizationToBlockFindFirst) Skip(count int) organizationToBlockFindFirst {
+func (r organizationToBlocksFindFirst) Skip(count int) organizationToBlocksFindFirst {
 	r.query.Inputs = append(r.query.Inputs, builder.Input{
 		Name:  "skip",
 		Value: count,
@@ -47449,7 +52666,7 @@ func (r organizationToBlockFindFirst) Skip(count int) organizationToBlockFindFir
 	return r
 }
 
-func (r organizationToBlockFindFirst) Take(count int) organizationToBlockFindFirst {
+func (r organizationToBlocksFindFirst) Take(count int) organizationToBlocksFindFirst {
 	r.query.Inputs = append(r.query.Inputs, builder.Input{
 		Name:  "take",
 		Value: count,
@@ -47457,7 +52674,7 @@ func (r organizationToBlockFindFirst) Take(count int) organizationToBlockFindFir
 	return r
 }
 
-func (r organizationToBlockFindFirst) Cursor(cursor OrganizationCursorParam) organizationToBlockFindFirst {
+func (r organizationToBlocksFindFirst) Cursor(cursor OrganizationCursorParam) organizationToBlocksFindFirst {
 	r.query.Inputs = append(r.query.Inputs, builder.Input{
 		Name:   "cursor",
 		Fields: []builder.Field{cursor.field()},
@@ -47465,7 +52682,7 @@ func (r organizationToBlockFindFirst) Cursor(cursor OrganizationCursorParam) org
 	return r
 }
 
-func (r organizationToBlockFindFirst) Exec(ctx context.Context) (
+func (r organizationToBlocksFindFirst) Exec(ctx context.Context) (
 	*OrganizationModel,
 	error,
 ) {
@@ -47481,7 +52698,7 @@ func (r organizationToBlockFindFirst) Exec(ctx context.Context) (
 	return v, nil
 }
 
-func (r organizationToBlockFindFirst) ExecInner(ctx context.Context) (
+func (r organizationToBlocksFindFirst) ExecInner(ctx context.Context) (
 	*InnerOrganization,
 	error,
 ) {
@@ -47497,23 +52714,23 @@ func (r organizationToBlockFindFirst) ExecInner(ctx context.Context) (
 	return v, nil
 }
 
-type organizationToBlockFindMany struct {
+type organizationToBlocksFindMany struct {
 	query builder.Query
 }
 
-func (r organizationToBlockFindMany) getQuery() builder.Query {
+func (r organizationToBlocksFindMany) getQuery() builder.Query {
 	return r.query
 }
 
-func (r organizationToBlockFindMany) ExtractQuery() builder.Query {
+func (r organizationToBlocksFindMany) ExtractQuery() builder.Query {
 	return r.query
 }
 
-func (r organizationToBlockFindMany) with()                 {}
-func (r organizationToBlockFindMany) organizationModel()    {}
-func (r organizationToBlockFindMany) organizationRelation() {}
+func (r organizationToBlocksFindMany) with()                 {}
+func (r organizationToBlocksFindMany) organizationModel()    {}
+func (r organizationToBlocksFindMany) organizationRelation() {}
 
-func (r organizationToBlockFindMany) With(params ...BlockRelationWith) organizationToBlockFindMany {
+func (r organizationToBlocksFindMany) With(params ...BlockRelationWith) organizationToBlocksFindMany {
 	for _, q := range params {
 		query := q.getQuery()
 		r.query.Outputs = append(r.query.Outputs, builder.Output{
@@ -47526,7 +52743,7 @@ func (r organizationToBlockFindMany) With(params ...BlockRelationWith) organizat
 	return r
 }
 
-func (r organizationToBlockFindMany) Select(params ...organizationPrismaFields) organizationToBlockFindMany {
+func (r organizationToBlocksFindMany) Select(params ...organizationPrismaFields) organizationToBlocksFindMany {
 	var outputs []builder.Output
 
 	for _, param := range params {
@@ -47540,7 +52757,7 @@ func (r organizationToBlockFindMany) Select(params ...organizationPrismaFields) 
 	return r
 }
 
-func (r organizationToBlockFindMany) Omit(params ...organizationPrismaFields) organizationToBlockFindMany {
+func (r organizationToBlocksFindMany) Omit(params ...organizationPrismaFields) organizationToBlocksFindMany {
 	var outputs []builder.Output
 
 	var raw []string
@@ -47559,7 +52776,7 @@ func (r organizationToBlockFindMany) Omit(params ...organizationPrismaFields) or
 	return r
 }
 
-func (r organizationToBlockFindMany) OrderBy(params ...BlockOrderByParam) organizationToBlockFindMany {
+func (r organizationToBlocksFindMany) OrderBy(params ...BlockOrderByParam) organizationToBlocksFindMany {
 	var fields []builder.Field
 
 	for _, param := range params {
@@ -47579,7 +52796,7 @@ func (r organizationToBlockFindMany) OrderBy(params ...BlockOrderByParam) organi
 	return r
 }
 
-func (r organizationToBlockFindMany) Skip(count int) organizationToBlockFindMany {
+func (r organizationToBlocksFindMany) Skip(count int) organizationToBlocksFindMany {
 	r.query.Inputs = append(r.query.Inputs, builder.Input{
 		Name:  "skip",
 		Value: count,
@@ -47587,7 +52804,7 @@ func (r organizationToBlockFindMany) Skip(count int) organizationToBlockFindMany
 	return r
 }
 
-func (r organizationToBlockFindMany) Take(count int) organizationToBlockFindMany {
+func (r organizationToBlocksFindMany) Take(count int) organizationToBlocksFindMany {
 	r.query.Inputs = append(r.query.Inputs, builder.Input{
 		Name:  "take",
 		Value: count,
@@ -47595,7 +52812,7 @@ func (r organizationToBlockFindMany) Take(count int) organizationToBlockFindMany
 	return r
 }
 
-func (r organizationToBlockFindMany) Cursor(cursor OrganizationCursorParam) organizationToBlockFindMany {
+func (r organizationToBlocksFindMany) Cursor(cursor OrganizationCursorParam) organizationToBlocksFindMany {
 	r.query.Inputs = append(r.query.Inputs, builder.Input{
 		Name:   "cursor",
 		Fields: []builder.Field{cursor.field()},
@@ -47603,7 +52820,7 @@ func (r organizationToBlockFindMany) Cursor(cursor OrganizationCursorParam) orga
 	return r
 }
 
-func (r organizationToBlockFindMany) Exec(ctx context.Context) (
+func (r organizationToBlocksFindMany) Exec(ctx context.Context) (
 	[]OrganizationModel,
 	error,
 ) {
@@ -47615,7 +52832,7 @@ func (r organizationToBlockFindMany) Exec(ctx context.Context) (
 	return v, nil
 }
 
-func (r organizationToBlockFindMany) ExecInner(ctx context.Context) (
+func (r organizationToBlocksFindMany) ExecInner(ctx context.Context) (
 	[]InnerOrganization,
 	error,
 ) {
@@ -47627,14 +52844,14 @@ func (r organizationToBlockFindMany) ExecInner(ctx context.Context) (
 	return v, nil
 }
 
-func (r organizationToBlockFindMany) Update(params ...OrganizationSetParam) organizationToBlockUpdateMany {
+func (r organizationToBlocksFindMany) Update(params ...OrganizationSetParam) organizationToBlocksUpdateMany {
 	r.query.Operation = "mutation"
 	r.query.Method = "updateMany"
 	r.query.Model = "Organization"
 
 	r.query.Outputs = countOutput
 
-	var v organizationToBlockUpdateMany
+	var v organizationToBlocksUpdateMany
 	v.query = r.query
 	var fields []builder.Field
 	for _, q := range params {
@@ -47663,17 +52880,17 @@ func (r organizationToBlockFindMany) Update(params ...OrganizationSetParam) orga
 	return v
 }
 
-type organizationToBlockUpdateMany struct {
+type organizationToBlocksUpdateMany struct {
 	query builder.Query
 }
 
-func (r organizationToBlockUpdateMany) ExtractQuery() builder.Query {
+func (r organizationToBlocksUpdateMany) ExtractQuery() builder.Query {
 	return r.query
 }
 
-func (r organizationToBlockUpdateMany) organizationModel() {}
+func (r organizationToBlocksUpdateMany) organizationModel() {}
 
-func (r organizationToBlockUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+func (r organizationToBlocksUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
 	var v BatchResult
 	if err := r.query.Exec(ctx, &v); err != nil {
 		return nil, err
@@ -47681,15 +52898,15 @@ func (r organizationToBlockUpdateMany) Exec(ctx context.Context) (*BatchResult, 
 	return &v, nil
 }
 
-func (r organizationToBlockUpdateMany) Tx() OrganizationManyTxResult {
+func (r organizationToBlocksUpdateMany) Tx() OrganizationManyTxResult {
 	v := newOrganizationManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
 }
 
-func (r organizationToBlockFindMany) Delete() organizationToBlockDeleteMany {
-	var v organizationToBlockDeleteMany
+func (r organizationToBlocksFindMany) Delete() organizationToBlocksDeleteMany {
+	var v organizationToBlocksDeleteMany
 	v.query = r.query
 	v.query.Operation = "mutation"
 	v.query.Method = "deleteMany"
@@ -47700,17 +52917,17 @@ func (r organizationToBlockFindMany) Delete() organizationToBlockDeleteMany {
 	return v
 }
 
-type organizationToBlockDeleteMany struct {
+type organizationToBlocksDeleteMany struct {
 	query builder.Query
 }
 
-func (r organizationToBlockDeleteMany) ExtractQuery() builder.Query {
+func (r organizationToBlocksDeleteMany) ExtractQuery() builder.Query {
 	return r.query
 }
 
-func (p organizationToBlockDeleteMany) organizationModel() {}
+func (p organizationToBlocksDeleteMany) organizationModel() {}
 
-func (r organizationToBlockDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+func (r organizationToBlocksDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
 	var v BatchResult
 	if err := r.query.Exec(ctx, &v); err != nil {
 		return nil, err
@@ -47718,7 +52935,7 @@ func (r organizationToBlockDeleteMany) Exec(ctx context.Context) (*BatchResult, 
 	return &v, nil
 }
 
-func (r organizationToBlockDeleteMany) Tx() OrganizationManyTxResult {
+func (r organizationToBlocksDeleteMany) Tx() OrganizationManyTxResult {
 	v := newOrganizationManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
@@ -48273,6 +53490,560 @@ func (r organizationToSessionsDeleteMany) Exec(ctx context.Context) (*BatchResul
 }
 
 func (r organizationToSessionsDeleteMany) Tx() OrganizationManyTxResult {
+	v := newOrganizationManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type organizationToChangesFindUnique struct {
+	query builder.Query
+}
+
+func (r organizationToChangesFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToChangesFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToChangesFindUnique) with()                 {}
+func (r organizationToChangesFindUnique) organizationModel()    {}
+func (r organizationToChangesFindUnique) organizationRelation() {}
+
+func (r organizationToChangesFindUnique) With(params ...ChangeRelationWith) organizationToChangesFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToChangesFindUnique) Select(params ...organizationPrismaFields) organizationToChangesFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToChangesFindUnique) Omit(params ...organizationPrismaFields) organizationToChangesFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToChangesFindUnique) Exec(ctx context.Context) (
+	*OrganizationModel,
+	error,
+) {
+	var v *OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToChangesFindUnique) ExecInner(ctx context.Context) (
+	*InnerOrganization,
+	error,
+) {
+	var v *InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToChangesFindUnique) Update(params ...OrganizationSetParam) organizationToChangesUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Organization"
+
+	var v organizationToChangesUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type organizationToChangesUpdateUnique struct {
+	query builder.Query
+}
+
+func (r organizationToChangesUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToChangesUpdateUnique) organizationModel() {}
+
+func (r organizationToChangesUpdateUnique) Exec(ctx context.Context) (*OrganizationModel, error) {
+	var v OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToChangesUpdateUnique) Tx() OrganizationUniqueTxResult {
+	v := newOrganizationUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r organizationToChangesFindUnique) Delete() organizationToChangesDeleteUnique {
+	var v organizationToChangesDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Organization"
+
+	return v
+}
+
+type organizationToChangesDeleteUnique struct {
+	query builder.Query
+}
+
+func (r organizationToChangesDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p organizationToChangesDeleteUnique) organizationModel() {}
+
+func (r organizationToChangesDeleteUnique) Exec(ctx context.Context) (*OrganizationModel, error) {
+	var v OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToChangesDeleteUnique) Tx() OrganizationUniqueTxResult {
+	v := newOrganizationUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type organizationToChangesFindFirst struct {
+	query builder.Query
+}
+
+func (r organizationToChangesFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToChangesFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToChangesFindFirst) with()                 {}
+func (r organizationToChangesFindFirst) organizationModel()    {}
+func (r organizationToChangesFindFirst) organizationRelation() {}
+
+func (r organizationToChangesFindFirst) With(params ...ChangeRelationWith) organizationToChangesFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToChangesFindFirst) Select(params ...organizationPrismaFields) organizationToChangesFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToChangesFindFirst) Omit(params ...organizationPrismaFields) organizationToChangesFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToChangesFindFirst) OrderBy(params ...ChangeOrderByParam) organizationToChangesFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r organizationToChangesFindFirst) Skip(count int) organizationToChangesFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToChangesFindFirst) Take(count int) organizationToChangesFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToChangesFindFirst) Cursor(cursor OrganizationCursorParam) organizationToChangesFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r organizationToChangesFindFirst) Exec(ctx context.Context) (
+	*OrganizationModel,
+	error,
+) {
+	var v *OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r organizationToChangesFindFirst) ExecInner(ctx context.Context) (
+	*InnerOrganization,
+	error,
+) {
+	var v *InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type organizationToChangesFindMany struct {
+	query builder.Query
+}
+
+func (r organizationToChangesFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToChangesFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToChangesFindMany) with()                 {}
+func (r organizationToChangesFindMany) organizationModel()    {}
+func (r organizationToChangesFindMany) organizationRelation() {}
+
+func (r organizationToChangesFindMany) With(params ...ChangeRelationWith) organizationToChangesFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r organizationToChangesFindMany) Select(params ...organizationPrismaFields) organizationToChangesFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToChangesFindMany) Omit(params ...organizationPrismaFields) organizationToChangesFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range organizationOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r organizationToChangesFindMany) OrderBy(params ...ChangeOrderByParam) organizationToChangesFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r organizationToChangesFindMany) Skip(count int) organizationToChangesFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToChangesFindMany) Take(count int) organizationToChangesFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r organizationToChangesFindMany) Cursor(cursor OrganizationCursorParam) organizationToChangesFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r organizationToChangesFindMany) Exec(ctx context.Context) (
+	[]OrganizationModel,
+	error,
+) {
+	var v []OrganizationModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r organizationToChangesFindMany) ExecInner(ctx context.Context) (
+	[]InnerOrganization,
+	error,
+) {
+	var v []InnerOrganization
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r organizationToChangesFindMany) Update(params ...OrganizationSetParam) organizationToChangesUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Organization"
+
+	r.query.Outputs = countOutput
+
+	var v organizationToChangesUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type organizationToChangesUpdateMany struct {
+	query builder.Query
+}
+
+func (r organizationToChangesUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r organizationToChangesUpdateMany) organizationModel() {}
+
+func (r organizationToChangesUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToChangesUpdateMany) Tx() OrganizationManyTxResult {
+	v := newOrganizationManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r organizationToChangesFindMany) Delete() organizationToChangesDeleteMany {
+	var v organizationToChangesDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Organization"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type organizationToChangesDeleteMany struct {
+	query builder.Query
+}
+
+func (r organizationToChangesDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p organizationToChangesDeleteMany) organizationModel() {}
+
+func (r organizationToChangesDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r organizationToChangesDeleteMany) Tx() OrganizationManyTxResult {
 	v := newOrganizationManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
@@ -61235,6 +67006,560 @@ func (r componentToTagsDeleteMany) Tx() ComponentManyTxResult {
 	return v
 }
 
+type componentToChangesFindUnique struct {
+	query builder.Query
+}
+
+func (r componentToChangesFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToChangesFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToChangesFindUnique) with()              {}
+func (r componentToChangesFindUnique) componentModel()    {}
+func (r componentToChangesFindUnique) componentRelation() {}
+
+func (r componentToChangesFindUnique) With(params ...ChangeRelationWith) componentToChangesFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentToChangesFindUnique) Select(params ...componentPrismaFields) componentToChangesFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToChangesFindUnique) Omit(params ...componentPrismaFields) componentToChangesFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToChangesFindUnique) Exec(ctx context.Context) (
+	*ComponentModel,
+	error,
+) {
+	var v *ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentToChangesFindUnique) ExecInner(ctx context.Context) (
+	*InnerComponent,
+	error,
+) {
+	var v *InnerComponent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentToChangesFindUnique) Update(params ...ComponentSetParam) componentToChangesUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Component"
+
+	var v componentToChangesUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type componentToChangesUpdateUnique struct {
+	query builder.Query
+}
+
+func (r componentToChangesUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToChangesUpdateUnique) componentModel() {}
+
+func (r componentToChangesUpdateUnique) Exec(ctx context.Context) (*ComponentModel, error) {
+	var v ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentToChangesUpdateUnique) Tx() ComponentUniqueTxResult {
+	v := newComponentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r componentToChangesFindUnique) Delete() componentToChangesDeleteUnique {
+	var v componentToChangesDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Component"
+
+	return v
+}
+
+type componentToChangesDeleteUnique struct {
+	query builder.Query
+}
+
+func (r componentToChangesDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p componentToChangesDeleteUnique) componentModel() {}
+
+func (r componentToChangesDeleteUnique) Exec(ctx context.Context) (*ComponentModel, error) {
+	var v ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentToChangesDeleteUnique) Tx() ComponentUniqueTxResult {
+	v := newComponentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type componentToChangesFindFirst struct {
+	query builder.Query
+}
+
+func (r componentToChangesFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToChangesFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToChangesFindFirst) with()              {}
+func (r componentToChangesFindFirst) componentModel()    {}
+func (r componentToChangesFindFirst) componentRelation() {}
+
+func (r componentToChangesFindFirst) With(params ...ChangeRelationWith) componentToChangesFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentToChangesFindFirst) Select(params ...componentPrismaFields) componentToChangesFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToChangesFindFirst) Omit(params ...componentPrismaFields) componentToChangesFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToChangesFindFirst) OrderBy(params ...ChangeOrderByParam) componentToChangesFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r componentToChangesFindFirst) Skip(count int) componentToChangesFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentToChangesFindFirst) Take(count int) componentToChangesFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentToChangesFindFirst) Cursor(cursor ComponentCursorParam) componentToChangesFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r componentToChangesFindFirst) Exec(ctx context.Context) (
+	*ComponentModel,
+	error,
+) {
+	var v *ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r componentToChangesFindFirst) ExecInner(ctx context.Context) (
+	*InnerComponent,
+	error,
+) {
+	var v *InnerComponent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type componentToChangesFindMany struct {
+	query builder.Query
+}
+
+func (r componentToChangesFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToChangesFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToChangesFindMany) with()              {}
+func (r componentToChangesFindMany) componentModel()    {}
+func (r componentToChangesFindMany) componentRelation() {}
+
+func (r componentToChangesFindMany) With(params ...ChangeRelationWith) componentToChangesFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r componentToChangesFindMany) Select(params ...componentPrismaFields) componentToChangesFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToChangesFindMany) Omit(params ...componentPrismaFields) componentToChangesFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range componentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r componentToChangesFindMany) OrderBy(params ...ChangeOrderByParam) componentToChangesFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r componentToChangesFindMany) Skip(count int) componentToChangesFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentToChangesFindMany) Take(count int) componentToChangesFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r componentToChangesFindMany) Cursor(cursor ComponentCursorParam) componentToChangesFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r componentToChangesFindMany) Exec(ctx context.Context) (
+	[]ComponentModel,
+	error,
+) {
+	var v []ComponentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r componentToChangesFindMany) ExecInner(ctx context.Context) (
+	[]InnerComponent,
+	error,
+) {
+	var v []InnerComponent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r componentToChangesFindMany) Update(params ...ComponentSetParam) componentToChangesUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Component"
+
+	r.query.Outputs = countOutput
+
+	var v componentToChangesUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type componentToChangesUpdateMany struct {
+	query builder.Query
+}
+
+func (r componentToChangesUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r componentToChangesUpdateMany) componentModel() {}
+
+func (r componentToChangesUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentToChangesUpdateMany) Tx() ComponentManyTxResult {
+	v := newComponentManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r componentToChangesFindMany) Delete() componentToChangesDeleteMany {
+	var v componentToChangesDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Component"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type componentToChangesDeleteMany struct {
+	query builder.Query
+}
+
+func (r componentToChangesDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p componentToChangesDeleteMany) componentModel() {}
+
+func (r componentToChangesDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r componentToChangesDeleteMany) Tx() ComponentManyTxResult {
+	v := newComponentManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 type componentFindUnique struct {
 	query builder.Query
 }
@@ -70675,6 +77000,1764 @@ func (r blockDeleteMany) Tx() BlockManyTxResult {
 	return v
 }
 
+type changeToOrganizationFindUnique struct {
+	query builder.Query
+}
+
+func (r changeToOrganizationFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r changeToOrganizationFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r changeToOrganizationFindUnique) with()           {}
+func (r changeToOrganizationFindUnique) changeModel()    {}
+func (r changeToOrganizationFindUnique) changeRelation() {}
+
+func (r changeToOrganizationFindUnique) With(params ...OrganizationRelationWith) changeToOrganizationFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r changeToOrganizationFindUnique) Select(params ...changePrismaFields) changeToOrganizationFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeToOrganizationFindUnique) Omit(params ...changePrismaFields) changeToOrganizationFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range changeOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeToOrganizationFindUnique) Exec(ctx context.Context) (
+	*ChangeModel,
+	error,
+) {
+	var v *ChangeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r changeToOrganizationFindUnique) ExecInner(ctx context.Context) (
+	*InnerChange,
+	error,
+) {
+	var v *InnerChange
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r changeToOrganizationFindUnique) Update(params ...ChangeSetParam) changeToOrganizationUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Change"
+
+	var v changeToOrganizationUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type changeToOrganizationUpdateUnique struct {
+	query builder.Query
+}
+
+func (r changeToOrganizationUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r changeToOrganizationUpdateUnique) changeModel() {}
+
+func (r changeToOrganizationUpdateUnique) Exec(ctx context.Context) (*ChangeModel, error) {
+	var v ChangeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r changeToOrganizationUpdateUnique) Tx() ChangeUniqueTxResult {
+	v := newChangeUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r changeToOrganizationFindUnique) Delete() changeToOrganizationDeleteUnique {
+	var v changeToOrganizationDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Change"
+
+	return v
+}
+
+type changeToOrganizationDeleteUnique struct {
+	query builder.Query
+}
+
+func (r changeToOrganizationDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p changeToOrganizationDeleteUnique) changeModel() {}
+
+func (r changeToOrganizationDeleteUnique) Exec(ctx context.Context) (*ChangeModel, error) {
+	var v ChangeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r changeToOrganizationDeleteUnique) Tx() ChangeUniqueTxResult {
+	v := newChangeUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type changeToOrganizationFindFirst struct {
+	query builder.Query
+}
+
+func (r changeToOrganizationFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r changeToOrganizationFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r changeToOrganizationFindFirst) with()           {}
+func (r changeToOrganizationFindFirst) changeModel()    {}
+func (r changeToOrganizationFindFirst) changeRelation() {}
+
+func (r changeToOrganizationFindFirst) With(params ...OrganizationRelationWith) changeToOrganizationFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r changeToOrganizationFindFirst) Select(params ...changePrismaFields) changeToOrganizationFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeToOrganizationFindFirst) Omit(params ...changePrismaFields) changeToOrganizationFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range changeOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeToOrganizationFindFirst) OrderBy(params ...OrganizationOrderByParam) changeToOrganizationFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r changeToOrganizationFindFirst) Skip(count int) changeToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r changeToOrganizationFindFirst) Take(count int) changeToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r changeToOrganizationFindFirst) Cursor(cursor ChangeCursorParam) changeToOrganizationFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r changeToOrganizationFindFirst) Exec(ctx context.Context) (
+	*ChangeModel,
+	error,
+) {
+	var v *ChangeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r changeToOrganizationFindFirst) ExecInner(ctx context.Context) (
+	*InnerChange,
+	error,
+) {
+	var v *InnerChange
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type changeToOrganizationFindMany struct {
+	query builder.Query
+}
+
+func (r changeToOrganizationFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r changeToOrganizationFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r changeToOrganizationFindMany) with()           {}
+func (r changeToOrganizationFindMany) changeModel()    {}
+func (r changeToOrganizationFindMany) changeRelation() {}
+
+func (r changeToOrganizationFindMany) With(params ...OrganizationRelationWith) changeToOrganizationFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r changeToOrganizationFindMany) Select(params ...changePrismaFields) changeToOrganizationFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeToOrganizationFindMany) Omit(params ...changePrismaFields) changeToOrganizationFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range changeOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeToOrganizationFindMany) OrderBy(params ...OrganizationOrderByParam) changeToOrganizationFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r changeToOrganizationFindMany) Skip(count int) changeToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r changeToOrganizationFindMany) Take(count int) changeToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r changeToOrganizationFindMany) Cursor(cursor ChangeCursorParam) changeToOrganizationFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r changeToOrganizationFindMany) Exec(ctx context.Context) (
+	[]ChangeModel,
+	error,
+) {
+	var v []ChangeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r changeToOrganizationFindMany) ExecInner(ctx context.Context) (
+	[]InnerChange,
+	error,
+) {
+	var v []InnerChange
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r changeToOrganizationFindMany) Update(params ...ChangeSetParam) changeToOrganizationUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Change"
+
+	r.query.Outputs = countOutput
+
+	var v changeToOrganizationUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type changeToOrganizationUpdateMany struct {
+	query builder.Query
+}
+
+func (r changeToOrganizationUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r changeToOrganizationUpdateMany) changeModel() {}
+
+func (r changeToOrganizationUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r changeToOrganizationUpdateMany) Tx() ChangeManyTxResult {
+	v := newChangeManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r changeToOrganizationFindMany) Delete() changeToOrganizationDeleteMany {
+	var v changeToOrganizationDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Change"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type changeToOrganizationDeleteMany struct {
+	query builder.Query
+}
+
+func (r changeToOrganizationDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p changeToOrganizationDeleteMany) changeModel() {}
+
+func (r changeToOrganizationDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r changeToOrganizationDeleteMany) Tx() ChangeManyTxResult {
+	v := newChangeManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type changeToComponentFindUnique struct {
+	query builder.Query
+}
+
+func (r changeToComponentFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r changeToComponentFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r changeToComponentFindUnique) with()           {}
+func (r changeToComponentFindUnique) changeModel()    {}
+func (r changeToComponentFindUnique) changeRelation() {}
+
+func (r changeToComponentFindUnique) With(params ...ComponentRelationWith) changeToComponentFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r changeToComponentFindUnique) Select(params ...changePrismaFields) changeToComponentFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeToComponentFindUnique) Omit(params ...changePrismaFields) changeToComponentFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range changeOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeToComponentFindUnique) Exec(ctx context.Context) (
+	*ChangeModel,
+	error,
+) {
+	var v *ChangeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r changeToComponentFindUnique) ExecInner(ctx context.Context) (
+	*InnerChange,
+	error,
+) {
+	var v *InnerChange
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r changeToComponentFindUnique) Update(params ...ChangeSetParam) changeToComponentUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Change"
+
+	var v changeToComponentUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type changeToComponentUpdateUnique struct {
+	query builder.Query
+}
+
+func (r changeToComponentUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r changeToComponentUpdateUnique) changeModel() {}
+
+func (r changeToComponentUpdateUnique) Exec(ctx context.Context) (*ChangeModel, error) {
+	var v ChangeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r changeToComponentUpdateUnique) Tx() ChangeUniqueTxResult {
+	v := newChangeUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r changeToComponentFindUnique) Delete() changeToComponentDeleteUnique {
+	var v changeToComponentDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Change"
+
+	return v
+}
+
+type changeToComponentDeleteUnique struct {
+	query builder.Query
+}
+
+func (r changeToComponentDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p changeToComponentDeleteUnique) changeModel() {}
+
+func (r changeToComponentDeleteUnique) Exec(ctx context.Context) (*ChangeModel, error) {
+	var v ChangeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r changeToComponentDeleteUnique) Tx() ChangeUniqueTxResult {
+	v := newChangeUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type changeToComponentFindFirst struct {
+	query builder.Query
+}
+
+func (r changeToComponentFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r changeToComponentFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r changeToComponentFindFirst) with()           {}
+func (r changeToComponentFindFirst) changeModel()    {}
+func (r changeToComponentFindFirst) changeRelation() {}
+
+func (r changeToComponentFindFirst) With(params ...ComponentRelationWith) changeToComponentFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r changeToComponentFindFirst) Select(params ...changePrismaFields) changeToComponentFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeToComponentFindFirst) Omit(params ...changePrismaFields) changeToComponentFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range changeOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeToComponentFindFirst) OrderBy(params ...ComponentOrderByParam) changeToComponentFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r changeToComponentFindFirst) Skip(count int) changeToComponentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r changeToComponentFindFirst) Take(count int) changeToComponentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r changeToComponentFindFirst) Cursor(cursor ChangeCursorParam) changeToComponentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r changeToComponentFindFirst) Exec(ctx context.Context) (
+	*ChangeModel,
+	error,
+) {
+	var v *ChangeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r changeToComponentFindFirst) ExecInner(ctx context.Context) (
+	*InnerChange,
+	error,
+) {
+	var v *InnerChange
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type changeToComponentFindMany struct {
+	query builder.Query
+}
+
+func (r changeToComponentFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r changeToComponentFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r changeToComponentFindMany) with()           {}
+func (r changeToComponentFindMany) changeModel()    {}
+func (r changeToComponentFindMany) changeRelation() {}
+
+func (r changeToComponentFindMany) With(params ...ComponentRelationWith) changeToComponentFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r changeToComponentFindMany) Select(params ...changePrismaFields) changeToComponentFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeToComponentFindMany) Omit(params ...changePrismaFields) changeToComponentFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range changeOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeToComponentFindMany) OrderBy(params ...ComponentOrderByParam) changeToComponentFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r changeToComponentFindMany) Skip(count int) changeToComponentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r changeToComponentFindMany) Take(count int) changeToComponentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r changeToComponentFindMany) Cursor(cursor ChangeCursorParam) changeToComponentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r changeToComponentFindMany) Exec(ctx context.Context) (
+	[]ChangeModel,
+	error,
+) {
+	var v []ChangeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r changeToComponentFindMany) ExecInner(ctx context.Context) (
+	[]InnerChange,
+	error,
+) {
+	var v []InnerChange
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r changeToComponentFindMany) Update(params ...ChangeSetParam) changeToComponentUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Change"
+
+	r.query.Outputs = countOutput
+
+	var v changeToComponentUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type changeToComponentUpdateMany struct {
+	query builder.Query
+}
+
+func (r changeToComponentUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r changeToComponentUpdateMany) changeModel() {}
+
+func (r changeToComponentUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r changeToComponentUpdateMany) Tx() ChangeManyTxResult {
+	v := newChangeManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r changeToComponentFindMany) Delete() changeToComponentDeleteMany {
+	var v changeToComponentDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Change"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type changeToComponentDeleteMany struct {
+	query builder.Query
+}
+
+func (r changeToComponentDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p changeToComponentDeleteMany) changeModel() {}
+
+func (r changeToComponentDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r changeToComponentDeleteMany) Tx() ChangeManyTxResult {
+	v := newChangeManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type changeFindUnique struct {
+	query builder.Query
+}
+
+func (r changeFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r changeFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r changeFindUnique) with()           {}
+func (r changeFindUnique) changeModel()    {}
+func (r changeFindUnique) changeRelation() {}
+
+func (r changeActions) FindUnique(
+	params ChangeEqualsUniqueWhereParam,
+) changeFindUnique {
+	var v changeFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "Change"
+	v.query.Outputs = changeOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r changeFindUnique) With(params ...ChangeRelationWith) changeFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r changeFindUnique) Select(params ...changePrismaFields) changeFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeFindUnique) Omit(params ...changePrismaFields) changeFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range changeOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeFindUnique) Exec(ctx context.Context) (
+	*ChangeModel,
+	error,
+) {
+	var v *ChangeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r changeFindUnique) ExecInner(ctx context.Context) (
+	*InnerChange,
+	error,
+) {
+	var v *InnerChange
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r changeFindUnique) Update(params ...ChangeSetParam) changeUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Change"
+
+	var v changeUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type changeUpdateUnique struct {
+	query builder.Query
+}
+
+func (r changeUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r changeUpdateUnique) changeModel() {}
+
+func (r changeUpdateUnique) Exec(ctx context.Context) (*ChangeModel, error) {
+	var v ChangeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r changeUpdateUnique) Tx() ChangeUniqueTxResult {
+	v := newChangeUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r changeFindUnique) Delete() changeDeleteUnique {
+	var v changeDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Change"
+
+	return v
+}
+
+type changeDeleteUnique struct {
+	query builder.Query
+}
+
+func (r changeDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p changeDeleteUnique) changeModel() {}
+
+func (r changeDeleteUnique) Exec(ctx context.Context) (*ChangeModel, error) {
+	var v ChangeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r changeDeleteUnique) Tx() ChangeUniqueTxResult {
+	v := newChangeUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type changeFindFirst struct {
+	query builder.Query
+}
+
+func (r changeFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r changeFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r changeFindFirst) with()           {}
+func (r changeFindFirst) changeModel()    {}
+func (r changeFindFirst) changeRelation() {}
+
+func (r changeActions) FindFirst(
+	params ...ChangeWhereParam,
+) changeFindFirst {
+	var v changeFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "Change"
+	v.query.Outputs = changeOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r changeFindFirst) With(params ...ChangeRelationWith) changeFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r changeFindFirst) Select(params ...changePrismaFields) changeFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeFindFirst) Omit(params ...changePrismaFields) changeFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range changeOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeFindFirst) OrderBy(params ...ChangeOrderByParam) changeFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r changeFindFirst) Skip(count int) changeFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r changeFindFirst) Take(count int) changeFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r changeFindFirst) Cursor(cursor ChangeCursorParam) changeFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r changeFindFirst) Exec(ctx context.Context) (
+	*ChangeModel,
+	error,
+) {
+	var v *ChangeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r changeFindFirst) ExecInner(ctx context.Context) (
+	*InnerChange,
+	error,
+) {
+	var v *InnerChange
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type changeFindMany struct {
+	query builder.Query
+}
+
+func (r changeFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r changeFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r changeFindMany) with()           {}
+func (r changeFindMany) changeModel()    {}
+func (r changeFindMany) changeRelation() {}
+
+func (r changeActions) FindMany(
+	params ...ChangeWhereParam,
+) changeFindMany {
+	var v changeFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "Change"
+	v.query.Outputs = changeOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r changeFindMany) With(params ...ChangeRelationWith) changeFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r changeFindMany) Select(params ...changePrismaFields) changeFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeFindMany) Omit(params ...changePrismaFields) changeFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range changeOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r changeFindMany) OrderBy(params ...ChangeOrderByParam) changeFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r changeFindMany) Skip(count int) changeFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r changeFindMany) Take(count int) changeFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r changeFindMany) Cursor(cursor ChangeCursorParam) changeFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r changeFindMany) Exec(ctx context.Context) (
+	[]ChangeModel,
+	error,
+) {
+	var v []ChangeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r changeFindMany) ExecInner(ctx context.Context) (
+	[]InnerChange,
+	error,
+) {
+	var v []InnerChange
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r changeFindMany) Update(params ...ChangeSetParam) changeUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Change"
+
+	r.query.Outputs = countOutput
+
+	var v changeUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type changeUpdateMany struct {
+	query builder.Query
+}
+
+func (r changeUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r changeUpdateMany) changeModel() {}
+
+func (r changeUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r changeUpdateMany) Tx() ChangeManyTxResult {
+	v := newChangeManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r changeFindMany) Delete() changeDeleteMany {
+	var v changeDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Change"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type changeDeleteMany struct {
+	query builder.Query
+}
+
+func (r changeDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p changeDeleteMany) changeModel() {}
+
+func (r changeDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r changeDeleteMany) Tx() ChangeManyTxResult {
+	v := newChangeManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 // --- template transaction.gotpl ---
 
 func newOrganizationUniqueTxResult() OrganizationUniqueTxResult {
@@ -71343,6 +79426,54 @@ func (p BlockManyTxResult) ExtractQuery() builder.Query {
 func (p BlockManyTxResult) IsTx() {}
 
 func (r BlockManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newChangeUniqueTxResult() ChangeUniqueTxResult {
+	return ChangeUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type ChangeUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p ChangeUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p ChangeUniqueTxResult) IsTx() {}
+
+func (r ChangeUniqueTxResult) Result() (v *ChangeModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newChangeManyTxResult() ChangeManyTxResult {
+	return ChangeManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type ChangeManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p ChangeManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p ChangeManyTxResult) IsTx() {}
+
+func (r ChangeManyTxResult) Result() (v *BatchResult) {
 	if err := r.result.Get(r.query.TxResult, &v); err != nil {
 		panic(err)
 	}
@@ -72930,6 +81061,122 @@ func (r blockUpsertOne) Exec(ctx context.Context) (*BlockModel, error) {
 
 func (r blockUpsertOne) Tx() BlockUniqueTxResult {
 	v := newBlockUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type changeUpsertOne struct {
+	query builder.Query
+}
+
+func (r changeUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r changeUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r changeUpsertOne) with()           {}
+func (r changeUpsertOne) changeModel()    {}
+func (r changeUpsertOne) changeRelation() {}
+
+func (r changeActions) UpsertOne(
+	params ChangeEqualsUniqueWhereParam,
+) changeUpsertOne {
+	var v changeUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "Change"
+	v.query.Outputs = changeOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r changeUpsertOne) Create(
+
+	_organization ChangeWithPrismaOrganizationSetParam,
+	_component ChangeWithPrismaComponentSetParam,
+	_type ChangeWithPrismaTypeSetParam,
+	_content ChangeWithPrismaContentSetParam,
+
+	optional ...ChangeSetParam,
+) changeUpsertOne {
+	var v changeUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _organization.field())
+	fields = append(fields, _component.field())
+	fields = append(fields, _type.field())
+	fields = append(fields, _content.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r changeUpsertOne) Update(
+	params ...ChangeSetParam,
+) changeUpsertOne {
+	var v changeUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r changeUpsertOne) Exec(ctx context.Context) (*ChangeModel, error) {
+	var v ChangeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r changeUpsertOne) Tx() ChangeUniqueTxResult {
+	v := newChangeUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
